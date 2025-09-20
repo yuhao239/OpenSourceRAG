@@ -7,6 +7,7 @@ class Config():
     DATA_DIR = "./data"
     CHROMA_PERSIST_DIR = "./db"
     CHROMA_COLLECTION_NAME = "best_practices_rag"
+    NODES_PATH = "./db/nodes.pkl"
 
     # --- Chunking Settings --- 
     CHUNK_SIZE = 512

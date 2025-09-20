@@ -3,12 +3,15 @@
 # Still lacking hybrid search function (BM25)
 
 import chromadb
+import asyncio
+import pickle
 from typing import List
 from config import Config
 from llama_index.core.vector_stores import VectorStoreQuery
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.schema import NodeWithScore
+from llama_index.retrievers.bm25 import BM25Retriever
 
 class SearcherAgent:
     """
@@ -37,6 +40,16 @@ class SearcherAgent:
         chroma_collection = db.get_collection(self.config.CHROMA_COLLECTION_NAME)
         self.vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
 
+        try:
+            with open(self.config.NODES_PATH, 'rb') as f:
+                nodes = pickle.load(f)
+                self.bm25_retrievers = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=5)
+                print("Loaded nodes and initialized BM25.")
+
+        except FileNotFoundError:
+            print("Nodes file not found, ensure they have processed and saved to disk.")
+            self.bm25_retrievers = None
+
         print("Initialized SearcherAgent.")
 
     async def asearch(self, query: str, hyde_document: str, top_k: int = 5) -> List[NodeWithScore]:
@@ -54,11 +67,10 @@ class SearcherAgent:
         print(f"\n--- Searching for documents related to: '{query}' ---")
         
         # Embed the hypothetical document to create the query embedding
-        query_embedding = self.embed_model.get_text_embedding(hyde_document)
+        query_embedding = await self.embed_model.aget_text_embedding(hyde_document)
         
-
         # Execute the search
-        retrieval_results = self.vector_store.query(
+        vector_results = self.vector_store.query(
             VectorStoreQuery(
             query_embedding=query_embedding, 
             similarity_top_k=top_k
@@ -68,17 +80,21 @@ class SearcherAgent:
         # VectorStoreQuery returns a VectorStoreQueryResult which has attribute node of type List[TextNode] and similarity scores of type float
         # Which is why we have to repackage them into a List[NodeWithScore] object that the RerankerAgent is expecting
         nodes_with_scores = []
-        for node, score in zip(retrieval_results.nodes, retrieval_results.similarities):
+        for node, score in zip(vector_results.nodes, vector_results.similarities):
             nodes_with_scores.append(
                 NodeWithScore(
                     node=node, 
                     score=score
                 )
             )
-        
-        # The result from ChromaVectorStore is already in the desired format
-        # It includes nodes and their scores.
-        search_results = nodes_with_scores
 
-        print(f"Found {len(search_results)} documents.")
-        return search_results
+        bm25_results = await asyncio.to_thread(self.bm25_retrievers.retrieve, query)
+
+        search_results = {} # Use a dict for ensuring uniqueness of documents
+
+        for node in nodes_with_scores + bm25_results:
+            search_results[node.id_] = node
+
+        print(f"Search complete. Found {len(search_results)} documents.")
+        return list(search_results.values())
+        

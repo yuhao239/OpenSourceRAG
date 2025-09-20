@@ -3,11 +3,13 @@
 
 from config import Config 
 import chromadb
+import pickle
 
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.retrievers.bm25 import BM25Retriever
 
 class IngestionAgent():
     """
@@ -61,5 +63,12 @@ class IngestionAgent():
         Args: 
             documents (list): A list of llamaindex document objects.
         """
-        await self.pipeline.arun(documents=documents, show_progress=True)
+        nodes = await self.pipeline.arun(documents=documents, show_progress=True)
         print("Processed the documents under the data folder.")
+
+        print(f"Saving {len(nodes)} nodes to disk...")
+        with open(self.config.NODES_PATH, 'wb') as f:
+            pickle.dump(nodes, f)
+        print(f"Nodes saved to {self.config.NODES_PATH}")
+
+
