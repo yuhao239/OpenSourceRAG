@@ -44,4 +44,18 @@ class RerankCompleteEvent:
     """Event dispatched when the RerankerAgent is finished."""
     query: str
     reranked_results: List[NodeWithScore] = field(default=list)
-    
+
+@dataclass 
+class WritingCompleteEvent:
+    """Event dispatched by the WriterAgent, triggering the VerifierAgent."""
+    query: str
+    reranked_results: List[NodeWithScore]
+    generated_answer: str 
+
+@dataclass 
+class RewriteEvent:
+    """Event to trigger the WriterAgent to rewrite an answer based on feedback."""
+    query: str
+    reranked_results: List[NodeWithScore]
+    feedback: str
+    previous_answer: str

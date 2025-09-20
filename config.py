@@ -19,3 +19,7 @@ class Config():
     LLM_MODEL = "qwen3:8b"
     LLM_REQUEST_TIMEOUT = 60.0
     LLM_CONTEXT_WINDOW = 8000 
+
+    # --- Agent settings --- 
+    USE_VERIFIER = True # Set to False to disable the VerifierAgent
+    MAX_REWRITES = 2
