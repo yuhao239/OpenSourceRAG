@@ -32,17 +32,10 @@ class QueryPlannerAgent:
 
     async def aplan_query(self, query: str) -> dict:
         """
-        Analyzes the user's query and generates a plan for the subsequent agents.
-
-        Args:
-            query (str): The user's input query.
-
-        Returns:
-            dict: A dictionary containing the plan:
-                  - 'requires_retrieval': A boolean indicating if DB search is needed.
-                  - 'hyde_document': A generated hypothetical document.
-                  - 'query': The original user query.
+        Analyzes the user's query and generates a plan. It conditionally
+        creates a hypothetical document only when retrieval is necessary.
         """
+    
         print(f"\n--- Planning for query: '{query}' ---")
         
         prompt = f"""

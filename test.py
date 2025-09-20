@@ -1,62 +1,99 @@
-# verify_ingestion.py
-# A standalone script to connect to the persisted ChromaDB and verify
-# the contents of our ingested data.
+# test.py
+"""
+A standalone script to test the QueryWorkflow of the RAG system.
 
-import chromadb
+This script assumes:
+1. The ingestion pipeline has already been run (`python main.py ingest`).
+2. The ChromaDB database exists in the './db' directory.
+3. The QueryWorkflow has been instrumented to return performance timings.
+"""
+import asyncio
+import nest_asyncio
+from work_flows.query_workflow import QueryWorkflow
+from events import StartQueryEvent
 from config import Config
 
-def verify_vector_database():
-    """
-    Connects to the ChromaDB and prints statistics to verify the ingestion.
-    """
-    print("--- Starting Verification Process ---")
+# Apply nest_asyncio to allow running asyncio in environments like Jupyter or scripts
+nest_asyncio.apply()
+
+# --- Define Test Queries ---
+# A list of questions designed to test various aspects of the RAG system.
+# They are based on the content of the provided PDF documents.
+TEST_QUERIES = [
+    {
+        "description": "Simple Fact Retrieval (BERT Paper)",
+        "query": "What does BERT stand for?"
+    },
+    {
+        "description": "Comparative Question (DeepSeek-R1 Paper)",
+        "query": "How does DeepSeek-R1's performance on the AIME 2024 benchmark compare to OpenAI-01-1217?"
+    },
+    {
+        "description": "Numerical/Detailed Question (Attention Paper)",
+        "query": "In the 'Attention is All You Need' paper, what were the training costs for the big Transformer model?"
+    },
+    {
+        "description": "Limitation Inquiry (DeepSeek-V3 Paper)",
+        "query": "What are the limitations of the DeepSeek-V3 model regarding deployment?"
+    },
+    {
+        "description": "Edge Case: Non-Retrieval / Conversational",
+        "query": "Hello, how are you today?"
+    },
+    {
+        "description": "Edge Case: Unanswerable from Context",
+        "query": "What is the capital of Canada?"
+    }
+]
+
+def print_report(query_data, result):
+    """Formats and prints the results and analytics for a single query."""
+    print(f"--- Test Case: {query_data['description']} ---")
+    print(f"Query: {query_data['query']}\n")
+
+    final_answer = result.get("final_answer", "N/A")
+    feedback = result.get("verification_feedback", "N/A")
+    timings = result.get("timings", {})
+
+    print("✅ Final Answer:")
+    print(f"{final_answer}\n")
+
+    print("🕵️ Verification Feedback:")
+    print(f"{feedback}\n")
+
+    print("⏱️ Performance Analytics:")
+    if timings:
+        for module, duration in timings.items():
+            print(f"  - {module.replace('_', ' ').title()}: {duration:.2f} seconds")
+    else:
+        print("  - No timing data available.")
     
-    try:
-        # 1. Load the application configuration
-        config = Config()
-        
-        # 2. Connect to the persistent ChromaDB client
-        print(f"Connecting to ChromaDB at: {config.CHROMA_PERSIST_DIR}")
-        db = chromadb.PersistentClient(path=config.CHROMA_PERSIST_DIR)
-        
-        # 3. Get the specific collection
-        print(f"Attempting to retrieve collection: '{config.CHROMA_COLLECTION_NAME}'")
-        collection = db.get_collection(config.CHROMA_COLLECTION_NAME)
-        
-        # 4. Perform verification checks
-        num_items = collection.count()
-        print(f"\n--- Verification Results ---")
-        if num_items > 0:
-            print(f"✅ Success: Collection '{config.CHROMA_COLLECTION_NAME}' found and contains {num_items} embedded chunks.")
-            
-            # Fetch and display a sample item
-            sample_item = collection.peek(limit=1)
-            
-            print("\n--- Sample Item ---")
-            if sample_item.get('ids'):
-                print(f"ID: {sample_item['ids'][0]}")
-            if sample_item.get('documents'):
-                # Display the first 200 characters of the text content
-                document_text = sample_item['documents'][0]
-                print(f"Document Text (preview): '{document_text[:200]}...'")
-            if sample_item.get('metadatas'):
-                print(f"Metadata: {sample_item['metadatas'][0]}")
-            print("-------------------\n")
-            print("✅ Verification PASSED.")
-            
-        else:
-            print(f"❌ Failure: Collection '{config.CHROMA_COLLECTION_NAME}' was found but is empty.")
-            print("Please run the ingestion workflow in main.py first.")
+    print("\n" + "="*80 + "\n")
 
-    except ValueError as e:
-        print(f"\n❌ ERROR: Could not find the collection '{config.CHROMA_COLLECTION_NAME}'.")
-        print("This likely means the ingestion workflow has not been run successfully yet.")
-        print("Please run `python main.py` to create and populate the database.")
-    except Exception as e:
-        print(f"\n❌ An unexpected error occurred: {e}")
+async def main():
+    """
+    Initializes and runs the QueryWorkflow for all predefined test queries.
+    """
+    print("Initializing RAG Query Workflow for testing...")
+    config = Config()
+    query_workflow = QueryWorkflow(config=config, timeout=600) # 10-minute timeout for safety
 
-    print("--- Verification Process Finished ---")
+    for query_data in TEST_QUERIES:
+        try:
+            # Create the initial event that will trigger the first listener in the workflow
+            initial_event = StartQueryEvent(query=query_data["query"])
+            
+            # Start the workflow and wait for it to complete
+            result = await query_workflow.run(initial_event)
+            
+            # Print a formatted report of the results
+            print_report(query_data, result)
 
+        except Exception as e:
+            print(f"\n--- ERROR running test case: {query_data['description']} ---")
+            print(f"Query: {query_data['query']}")
+            print(f"Error: {e}\n")
+            print("="*80 + "\n")
 
 if __name__ == "__main__":
-    verify_vector_database()
+    asyncio.run(main())
