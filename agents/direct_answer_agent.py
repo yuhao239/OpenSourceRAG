@@ -15,7 +15,7 @@ class DirectAnswerAgent:
             self.llm = llm
         else:
             self.llm = Ollama(
-                model=config.LLM_MODEL,
+                model=config.UTILITY_MODEL,
                 request_timeout=config.LLM_REQUEST_TIMEOUT
             )
         print("Initialized DirectAnswerAgent.")

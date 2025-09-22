@@ -1,6 +1,7 @@
 # agents/query_planner_agent.py
 
 import json
+from typing import List
 from llama_index.core.llms import LLM
 from llama_index.llms.ollama import Ollama
 from config import Config
@@ -25,38 +26,63 @@ class QueryPlannerAgent:
             self.llm = llm
         else:
             self.llm = Ollama(
-                model=config.LLM_MODEL,
+                model=config.UTILITY_MODEL,
                 request_timeout=config.LLM_REQUEST_TIMEOUT,
             )
         print("Initialized QueryPlannerAgent.")
 
-    async def aplan_query(self, query: str) -> dict:
+    async def aplan_query(self, query: str, chat_history: List[dict] = None)  -> dict:
         """
-        Analyzes the user's query and generates a plan. It conditionally
-        creates a hypothetical document only when retrieval is necessary.
+        Analyzes the user's query and conversation history to generate a plan.
+        It rewrites the query for clarity and conditionally creates a hypothetical
+        document only when retrieval is necessary.
+
         """
     
         print(f"\n--- Planning for query: '{query}' ---")
+
+        chat_history = chat_history or []
+        history_formatted = "\n".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
         
         prompt = f"""
-        You are a query classification and hypothetical document generation agent.
-        Your goal is to prepare for a Retrieval-Augmented Generation (RAG) system.
+        You are a query analysis and hypothetical document generation agent for a RAG system.
+        Your goal is to understand the user's intent in the context of a conversation and
+        prepare the query for retrieval.
 
-        Analyze the following user query:
+        Here is the conversation history:
+        <history>
+        {history_formatted}
+        </history>
+
+        Here is the user's latest query:
         <query>
         {query}
         </query>
 
-        First, determine if this query requires searching an external knowledge base to answer.
-        - If the query is a simple greeting, conversational, or a question that can be answered with general knowledge (e.g., "What is 2+2?"), retrieval is not needed.
-        - If the query asks for specific information, data, or details that are likely contained in a database, retrieval is required.
+        **Your Tasks:**
 
-        Second, generate a concise, one-paragraph hypothetical document that provides a plausible, detailed answer to the query. This document will be used to find similar, real documents in the knowledge base.
+        1.  **Rewrite Query:** First, analyze the history and the latest query. If the query is a follow-up,
+            rewrite it to be a standalone, self-contained question. For example, if the user asks "What about its safety features?"
+            after a conversation about Llama 2, rewrite it to "What are the safety features of the Llama 2 model?".
+            If the query is already standalone, use it as is.
 
-        Provide your response as a single, valid JSON object with three keys: "requires_retrieval" (boolean), "hyde_document" (string), and "query" (string, the original query).
-        Do not include any preamble, explanations, or markdown formatting outside of the JSON object.
+        2.  **Classify Retrieval:** Determine if this rewritten query requires searching an external knowledge base.
+            - Retrieval is **not needed** for simple greetings, conversational filler, or basic general knowledge.
+            - Retrieval is **required** for queries asking for specific, detailed information.
 
-        Example:
+        3.  **Generate HyDE Document:** Create a concise, one-paragraph hypothetical document that provides a
+            plausible, detailed answer to the **rewritten query**. This document will be used to find similar,
+            real documents in the knowledge base.
+
+        **Output Format:**
+        Provide your response as a single, valid JSON object with three keys:
+        - "requires_retrieval": (boolean) Your classification decision.
+        - "hyde_document": (string) The hypothetical document.
+        - "query": (string) The rewritten, standalone query.
+
+        Do not include any preamble or text outside the JSON object.
+
+        Example format example:
         Query: "What were the key findings of the Llama 2 paper?"
         {{
             "requires_retrieval": true,

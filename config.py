@@ -18,6 +18,7 @@ class Config():
 
     # --- LLM settings (settings to be tweaked later on) --- 
     LLM_MODEL = "qwen3:8b"
+    UTILITY_MODEL = "qwen3:1.7b"
     LLM_REQUEST_TIMEOUT = 60.0
     LLM_CONTEXT_WINDOW = 8000 
 

@@ -27,7 +27,7 @@ class QueryWorkflow(Workflow):
     def __init__(self, config: Config, **kwargs):
         super().__init__(**kwargs)
         self.config = config
-        self.query_planner_agent = QueryPlannerAgent(config) # LLM not specified, needs further testing 
+        self.query_planner_agent = QueryPlannerAgent(config) # needs further testing
         self.searcher_agent = SearcherAgent(config)
         self.reranker_agent = RerankerAgent(config)
         self.writer_agent = WriterAgent(config)
@@ -56,13 +56,14 @@ class QueryWorkflow(Workflow):
 
         # TIMINGS FOR PERFORMANCE TESTS
         self.context['timings'] = {}
+        chat_history = self.context.get('chat_history', [])
         self.context['workflow_start_time'] = time.monotonic()
         step_start_time = time.monotonic()
 
         # Run the Query Planner Agent
         # In all cases, generate the HyDE document.
         # However, came up with a clever trick to avoid using the hyde document when no need for retrieval by changing the model prompt
-        plan = await self.query_planner_agent.aplan_query(event.query)
+        plan = await self.query_planner_agent.aplan_query(event.query, chat_history=chat_history)
 
         self.context['timings']['query_planning'] = time.monotonic() - step_start_time
 
