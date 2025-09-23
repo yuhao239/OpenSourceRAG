@@ -33,8 +33,7 @@ class IngestionAgent():
         
         # Define the embedding model 
         self.embed_model = HuggingFaceEmbedding(
-            model_name = self.config.EMBEDDING_MODEL_NAME,
-            device="cuda"
+            model_name = self.config.EMBEDDING_MODEL_NAME
         )
 
         # Vector Database (chromadb for now)

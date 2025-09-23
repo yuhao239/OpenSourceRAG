@@ -31,8 +31,7 @@ class SearcherAgent:
             self.embed_model = embed_model
         else:
             self.embed_model = HuggingFaceEmbedding(
-                model_name=self.config.EMBEDDING_MODEL_NAME,
-                device="cuda"
+                model_name=self.config.EMBEDDING_MODEL_NAME
             )
         
         # Connect to the existing vector store

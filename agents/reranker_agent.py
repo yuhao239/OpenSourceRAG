@@ -28,7 +28,7 @@ class RerankerAgent:
             top_n = 3 # Subject to experimentation
         )
 
-    print("Initialized RerankerAgent.")
+        print("Initialized RerankerAgent.")
 
     async def arerank(self, query: str, documents: List[NodeWithScore]) -> List[NodeWithScore]:
         """

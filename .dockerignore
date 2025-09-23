@@ -1,0 +1,16 @@
+venv/
+assistant/
+env/
+db/
+*.db
+*.sqlite3
+pycache/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.vscode/
+.idea/
+.pytest_cache/
+.coverage
+htmlcov/

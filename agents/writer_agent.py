@@ -29,6 +29,7 @@ class WriterAgent:
             self.llm = Ollama(
                 model=config.LLM_MODEL,
                 request_timeout=config.LLM_REQUEST_TIMEOUT,
+                host=config.OLLAMA_HOST
             )
         print("Initialized WriterAgent.")
 

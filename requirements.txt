@@ -1,0 +1,14 @@
+llama-index
+llama-index-llms-ollama
+llama-index-embeddings-huggingface
+llama-index-vector-stores-chroma
+llama-index-retrievers-bm25
+chromadb
+sentence-transformers
+asyncpg
+fastapi
+uvicorn[standard]
+streamlit
+requests
+nest_asyncio
+rank_bm25

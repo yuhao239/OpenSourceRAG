@@ -1,0 +1,63 @@
+services:
+  postgres_db:
+    image: postgres:15
+    container_name: rag_postgres_db
+    environment:
+      POSTGRES_USER: ${DB_USER:-rag_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mysecretpassword}
+      POSTGRES_DB: ${DB_NAME:-rag_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag_user -d rag_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: rag_api_server
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      # The API finds the database using its service name on the Docker network
+      - DB_HOST=postgres_db 
+      - DB_USER=${DB_USER:-rag_user}
+      - DB_PASSWORD=${DB_PASSWORD:-mysecretpassword}
+      - DB_NAME=${DB_NAME:-rag_db}
+      # The API finds the host's Ollama service using Docker's special DNS name
+      - OLLAMA_HOST=host.docker.internal 
+    volumes:
+      - ./db:/app/db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: rag_streamlit_ui
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    environment:
+      # The UI finds the API using its service name on the Docker network
+      - API_BASE_URL=http://api:8000
+
+volumes:
+  postgres_data:
+

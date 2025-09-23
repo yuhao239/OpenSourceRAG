@@ -28,6 +28,7 @@ class QueryPlannerAgent:
             self.llm = Ollama(
                 model=config.UTILITY_MODEL,
                 request_timeout=config.LLM_REQUEST_TIMEOUT,
+                host=config.OLLAMA_HOST
             )
         print("Initialized QueryPlannerAgent.")
 
