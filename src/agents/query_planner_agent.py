@@ -1,10 +1,13 @@
 # agents/query_planner_agent.py
 
 import json
-from typing import List
+from typing import List, Optional
+
 from llama_index.core.llms import LLM
 from llama_index.llms.ollama import Ollama
+
 from config import Config
+
 
 class QueryPlannerAgent:
     """
@@ -17,6 +20,7 @@ class QueryPlannerAgent:
     def __init__(self, config: Config, llm: LLM = None):
         """
         Initializes the QueryPlannerAgent.
+
         Args:
             config (Config): The application configuration object.
             llm (LLM, optional): An instance of a LlamaIndex LLM. Defaults to None.
@@ -32,19 +36,17 @@ class QueryPlannerAgent:
             )
         print("Initialized QueryPlannerAgent.")
 
-    async def aplan_query(self, query: str, chat_history: List[dict] = None)  -> dict:
+    async def aplan_query(self, query: str, chat_history: Optional[List[dict]] = None) -> dict:
         """
         Analyzes the user's query and conversation history to generate a plan.
         It rewrites the query for clarity and conditionally creates a hypothetical
         document only when retrieval is necessary.
-
         """
-    
         print(f"\n--- Planning for query: '{query}' ---")
 
         chat_history = chat_history or []
         history_formatted = "\n".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
-        
+
         prompt = f"""
         You are a query analysis and hypothetical document generation agent for a RAG system.
         Your goal is to understand the user's intent in the context of a conversation and
@@ -97,24 +99,44 @@ class QueryPlannerAgent:
         print("--- [DEBUG] LLM call complete. Received response. ---")
 
         try:
-            # LLM response contains excess <think> section that is messing with extracting the json 
-            # So format the response to contain only the json file 
-            json_start = response.text.find('{')
-            json_end = response.text.find('}') + 1 
+            raw_text = response.text.strip()
+            if "</think>" in raw_text:
+                raw_text = raw_text.split("</think>")[-1].strip()
 
-            if json_start != -1 and json_end != 0:
-                json_string = response.text[json_start:json_end]
-                plan = json.loads(json_string)
-            else:
-                raise json.JSONDecodeError("No JSON object found in response.", response.text, 0)
+            if raw_text.startswith("```"):
+                lines = raw_text.splitlines()
+                if lines and lines[0].startswith("```"):
+                    lines = lines[1:]
+                while lines and lines[-1].strip().startswith("```"):
+                    lines = lines[:-1]
+                raw_text = "\n".join(lines).strip()
 
+            def _extract_first_json(text: str) -> Optional[str]:
+                depth = 0
+                start = None
+                for idx, ch in enumerate(text):
+                    if ch == '{':
+                        if depth == 0:
+                            start = idx
+                        depth += 1
+                    elif ch == '}':
+                        if depth:
+                            depth -= 1
+                            if depth == 0 and start is not None:
+                                return text[start:idx + 1]
+                return None
+
+            json_fragment = _extract_first_json(raw_text)
+            if not json_fragment:
+                raise json.JSONDecodeError("No JSON object found in response.", raw_text, 0)
+
+            plan = json.loads(json_fragment)
             print(f"Query requires retrieval: {plan.get('requires_retrieval')}")
             print(f"Generated HyDE document (preview): '{plan.get('hyde_document', '')[:100]}...'")
             return plan
-        except (json.JSONDecodeError, TypeError) as e:
-            print(f"Error parsing LLM response: {e}")
+        except (json.JSONDecodeError, TypeError) as exc:
+            print(f"Error parsing LLM response: {exc}")
             print(f"Raw response: {response.text}")
-            # Fallback in case of parsing error
             return {
                 "requires_retrieval": True,
                 "hyde_document": "Could not generate a hypothetical document.",

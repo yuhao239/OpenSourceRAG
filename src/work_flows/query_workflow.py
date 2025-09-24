@@ -20,54 +20,49 @@ from agents.writer_agent import WriterAgent
 from agents.verifier_agent import VerifierAgent
 from agents.direct_answer_agent import DirectAnswerAgent
 
+
 class QueryWorkflow(Workflow):
-    """
-    Orchestrates the real-time, interactive query process.
-    """
+    """Orchestrates the real-time, interactive query process."""
+
     def __init__(self, config: Config, **kwargs):
         super().__init__(**kwargs)
         self.config = config
-        self.query_planner_agent = QueryPlannerAgent(config) # needs further testing
+        self.query_planner_agent = QueryPlannerAgent(config)
         self.searcher_agent = SearcherAgent(config)
         self.reranker_agent = RerankerAgent(config)
         self.writer_agent = WriterAgent(config)
         self.verifier_agent = VerifierAgent(config)
         self.direct_answer_agent = DirectAnswerAgent(config)
-        
-        # Register the listener for the starting event
+
         self.add_listener(StartQueryEvent, self.start_query_planning)
         self.add_listener(QueryPlanningCompleteEvent, self.start_search)
         self.add_listener(SearchCompleteEvent, self.start_reranking)
-
-        # The WriterAgent can be triggered by either event
         self.add_listener(RerankCompleteEvent, self.handle_writing_request)
         self.add_listener(RewriteEvent, self.handle_writing_request)
-
         self.add_listener(WritingCompleteEvent, self.start_verification)
 
+    def _set_status(self, phase: str) -> None:
+        callback = self.context.get('set_status')
+        if callable(callback):
+            try:
+                callback(phase)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                print(f"[Workflow Status] Failed to update status: {exc}")
+
     async def start_query_planning(self, event: StartQueryEvent):
-        """
-        The entry point for the query workflow, triggered by StartQueryEvent.
-        """
+        """Entry point for the query workflow."""
         print("\n--- Query Workflow Started ---")
+        self._set_status('Planning query')
 
-        # Initialize the rewrite cycles attribute for VerifierAgent
         self.context['rewrite_cycles'] = 0
-
-        # TIMINGS FOR PERFORMANCE TESTS
         self.context['timings'] = {}
         chat_history = self.context.get('chat_history', [])
         self.context['workflow_start_time'] = time.monotonic()
         step_start_time = time.monotonic()
 
-        # Run the Query Planner Agent
-        # In all cases, generate the HyDE document.
-        # However, came up with a clever trick to avoid using the hyde document when no need for retrieval by changing the model prompt
         plan = await self.query_planner_agent.aplan_query(event.query, chat_history=chat_history)
-
         self.context['timings']['query_planning'] = time.monotonic() - step_start_time
 
-        # Dispatch completion event to trigger the next agent (Searcher)
         await self.dispatch(
             QueryPlanningCompleteEvent(
                 query=plan.get("query"),
@@ -76,52 +71,53 @@ class QueryWorkflow(Workflow):
                 result=plan
             )
         )
-    
+
     async def start_search(self, ev: QueryPlanningCompleteEvent):
-        """
-        Triggered by QueryPlanningCompleteEvent. Runs the SearcherAgent. 
-        """
+        """Triggered by QueryPlanningCompleteEvent. Runs the SearcherAgent."""
         if not ev.requires_retrieval:
             print("\n--- Retrieval not required. Skipping Search. ---")
+            self._set_status('Answering directly')
 
             step_start_time = time.monotonic()
-            final_answer = await self.direct_answer_agent.adirect_answer(query=ev.query, documents=ev.hyde_document)
+            final_answer = await self.direct_answer_agent.adirect_answer(
+                query=ev.query,
+                documents=ev.hyde_document
+            )
             self.context['timings']['direct_answer'] = time.monotonic() - step_start_time
-
             self.context['timings']['total_workflow'] = time.monotonic() - self.context['workflow_start_time']
-            await self.dispatch(StopEvent(result={"final_answer": final_answer, # Default to HyDE document for non-retrieval case
-                                                  "verification_feedback": "N/A (Direct Answer)",
-                                                  'timings': self.context['timings']}))
-            return 
-        
+            self._set_status('Completed')
+            await self.dispatch(StopEvent(result={
+                "final_answer": final_answer,
+                "verification_feedback": "N/A (Direct Answer)",
+                'timings': self.context['timings']
+            }))
+            return
+
         step_start_time = time.monotonic()
+        self._set_status('Searching knowledge base')
         search_results = await self.searcher_agent.asearch(
             query=ev.query,
             hyde_document=ev.hyde_document
         )
         self.context['timings']['search'] = time.monotonic() - step_start_time
 
-        # Dispatch completion event to trigger next agent (reranker)
         await self.dispatch(
             SearchCompleteEvent(
                 query=ev.query,
                 search_results=search_results
             )
         )
-    
-    async def start_reranking(self, ev: SearchCompleteEvent):
-        """
-        Triggered by SearchCompleteEvent. Runs the RerankerAgent.
-        """
 
+    async def start_reranking(self, ev: SearchCompleteEvent):
+        """Triggered by SearchCompleteEvent. Runs the RerankerAgent."""
         step_start_time = time.monotonic()
+        self._set_status('Reranking results')
         reranked_results = await self.reranker_agent.arerank(
             query=ev.query,
             documents=ev.search_results
         )
         self.context['timings']['reranking'] = time.monotonic() - step_start_time
 
-        # Dispatch completion event to pass off to final WriterAgent
         await self.dispatch(
             RerankCompleteEvent(
                 query=ev.query,
@@ -129,79 +125,14 @@ class QueryWorkflow(Workflow):
             )
         )
 
-
-    async def start_verification(self, ev: WritingCompleteEvent):
-        """
-        Triggered by WritingCompleteEvent. Runs the VerifierAgent if enabled. 
-        This is the final step before stopping the workflow.
-        """
-
-        if not self.config.USE_VERIFIER:
-            print("\n --- Verification skipped by configuration ---")
-            self.context['timings']['total_workflow'] = time.monotonic() - self.context['workflow_start_time']
-            await self.dispatch(StopEvent(
-                    result = {
-                        "final_answer": ev.generated_answer,
-                        "verification_feedback": "Verification was disabled",
-                        "timings": self.context['timings']
-                        }
-                ))
-            return 
-
-        step_start_time = time.monotonic()
-        verification_result = await self.verifier_agent.averify_answer(
-            query=ev.query,
-            generated_answer=ev.generated_answer,
-            source_context=ev.reranked_results
-        )
-        self.context['timings']['verification'] = self.context['timings'].get('verification', 0) + (time.monotonic() - step_start_time)
-
-        
-        is_faithful = verification_result.get("is_faithful", False)
-        if is_faithful:
-            # Answer is good, stop the workflow
-            print("\n--- Answer is faithful. Workflow complete. ---")
-            self.context['timings']['total_workflow'] = time.monotonic() - self.context['workflow_start_time']
-            await self.dispatch(StopEvent(
-            result={
-                "final_answer": ev.generated_answer,
-                "verification_feedback": verification_result.get("feedback"),
-                "timings": self.context['timings']
-                }
-            ))
-            
-        else:
-            # Answer is not faithful, check rewrite limit
-            self.context['rewrite_cycles'] += 1 
-            if self.context['rewrite_cycles'] >= self.config.MAX_REWRITES:
-                 print(f"\n--- Max rewrite limit ({self.config.MAX_REWRITES}) reached. Stopping. ---")
-                 await self.dispatch(StopEvent(
-                        result={
-                            "final_answer": ev.generated_answer,
-                            "verification_feedback": f"FINAL ATTEMPT FAILED: {verification_result.get('feedback')}",
-                            "timings": self.context['timings']
-                            }
-                ))
-            else:
-                # Limit not reached, dispatch RewriteEvent
-                print(f"\n--- Answer not faithful. Starting rewrite cycle {self.context['rewrite_cycles']}. ---")
-                await self.dispatch(
-                    RewriteEvent(
-                        query=ev.query,
-                        reranked_results=ev.reranked_results,
-                        feedback=verification_result.get("feedback"),
-                        previous_answer=ev.generated_answer
-                    )
-                )
-    
     async def handle_writing_request(self, ev: RerankCompleteEvent | RewriteEvent):
-        """
-        A single handler for both initial writing and subsequent rewrites.
-        Can be triggered by either a RerankCompleteEvent or a RewriteEvent. 
-        """
+        """Handles both initial writing and rewrites."""
         feedback = ev.feedback if isinstance(ev, RewriteEvent) else None
         previous_answer = ev.previous_answer if isinstance(ev, RewriteEvent) else None
-        
+
+        phase_label = 'Rewriting answer' if feedback else 'Composing answer'
+        self._set_status(phase_label)
+
         step_start_time = time.monotonic()
         generated_answer = await self.writer_agent.awrite_answer(
             query=ev.query,
@@ -211,7 +142,6 @@ class QueryWorkflow(Workflow):
         )
         self.context['timings']['writing'] = self.context['timings'].get('writing', 0) + (time.monotonic() - step_start_time)
 
-        # Dispatch WritingCompleteEvent to trigger the VerifierAgent
         await self.dispatch(
             WritingCompleteEvent(
                 query=ev.query,
@@ -219,3 +149,67 @@ class QueryWorkflow(Workflow):
                 generated_answer=generated_answer
             )
         )
+
+    async def start_verification(self, ev: WritingCompleteEvent):
+        """Triggered by WritingCompleteEvent. Runs the VerifierAgent if enabled."""
+        if not self.config.USE_VERIFIER:
+            print("\n --- Verification skipped by configuration ---")
+            self._set_status('Finalizing answer')
+            self.context['timings']['total_workflow'] = time.monotonic() - self.context['workflow_start_time']
+            self._set_status('Completed')
+            await self.dispatch(StopEvent(
+                result={
+                    "final_answer": ev.generated_answer,
+                    "verification_feedback": "Verification was disabled",
+                    "timings": self.context['timings']
+                }
+            ))
+            return
+
+        step_start_time = time.monotonic()
+        self._set_status('Verifying answer')
+        verification_result = await self.verifier_agent.averify_answer(
+            query=ev.query,
+            generated_answer=ev.generated_answer,
+            source_context=ev.reranked_results
+        )
+        self.context['timings']['verification'] = self.context['timings'].get('verification', 0) + (time.monotonic() - step_start_time)
+
+        is_faithful = verification_result.get("is_faithful", False)
+        if is_faithful:
+            print("\n--- Answer is faithful. Workflow complete. ---")
+            self.context['timings']['total_workflow'] = time.monotonic() - self.context['workflow_start_time']
+            self._set_status('Completed')
+            await self.dispatch(StopEvent(
+                result={
+                    "final_answer": ev.generated_answer,
+                    "verification_feedback": verification_result.get("feedback"),
+                    "timings": self.context['timings']
+                }
+            ))
+            return
+
+        self.context['rewrite_cycles'] += 1
+        if self.context['rewrite_cycles'] >= self.config.MAX_REWRITES:
+            print(f"\n--- Max rewrite limit ({self.config.MAX_REWRITES}) reached. Stopping. ---")
+            self._set_status('Completed (verification failed)')
+            await self.dispatch(StopEvent(
+                result={
+                    "final_answer": ev.generated_answer,
+                    "verification_feedback": f"FINAL ATTEMPT FAILED: {verification_result.get('feedback')}",
+                    "timings": self.context['timings']
+                }
+            ))
+            return
+
+        print(f"\n--- Answer not faithful. Starting rewrite cycle {self.context['rewrite_cycles']}. ---")
+        self._set_status('Applying feedback')
+        await self.dispatch(
+            RewriteEvent(
+                query=ev.query,
+                reranked_results=ev.reranked_results,
+                feedback=verification_result.get("feedback"),
+                previous_answer=ev.generated_answer
+            )
+        )
+
