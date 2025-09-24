@@ -7,14 +7,27 @@ This separates the core RAG and persistence logic from the user interface,
 allowing any frontend application to interact with the chatbot.
 """
 import uvicorn
-from fastapi import FastAPI, HTTPException
+import chromadb
+import asyncio
+import os
+from fastapi import (
+    FastAPI, 
+    HTTPException,
+    UploadFile,
+    File,
+    BackgroundTasks
+)
+import shutil
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
 from config import Config
 from database import DatabaseManager
 from work_flows.query_workflow import QueryWorkflow
+from work_flows.ingestion import IngestionWorkflow
+from events import StartIngestionEvent
 from events import StartQueryEvent
+from typing import List
 
 # --- Data Models for API requests and responses ---
 class QueryRequest(BaseModel):
@@ -111,6 +124,69 @@ async def post_query(conversation_id: int, request: QueryRequest):
 
     # 4. Return the final answer
     return {"response": final_answer, "metadata": result}
+
+@app.get("/documents", response_model=List[str])
+async def get_documents():
+    """Lists all the files in the data directory."""
+    if not os.path.exists(app_config.DATA_DIR):
+        return []
+    return os.listdir(app_config.DATA_DIR)
+
+@app.post("/documents/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """Uploads a new PDF file to the data directory."""
+    if not os.path.exists(app_config.DATA_DIR):
+        os.makedirs(app_config.DATA_DIR)
+    
+    filepath = os.path.join(app_config.DATA_DIR, file.filename)
+
+    with open(filepath, 'wb') as buffer:
+        buffer.write(await file.read())
+    
+    return {"filename": file.filename, "status": "success"}
+
+@app.delete("/documents/{filename}")
+async def delete_document(filename: str):
+    """Deletes a specific file from the data directory."""
+    filepath = os.path.join(app_config.DATA_DIR, filename)
+
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    os.remove(filepath)
+    return {"filename": filename, "status": "deleted"}
+
+def run_ingestion_task():
+    """The actual ingestion logic to be run in the background."""
+    print("--- Starting ingestion in the background. ---")
+    # 1. Safely clear the old ChromaDB collection through the client
+    try:
+        client = chromadb.PersistentClient(path=app_config.CHROMA_PERSIST_DIR)
+        # Check if the collection exists before trying to delete it
+        collections = client.list_collections()
+        if any(c.name == app_config.CHROMA_COLLECTION_NAME for c in collections):
+            print(f"Deleting existing ChromaDB collection: '{app_config.CHROMA_COLLECTION_NAME}'")
+            client.delete_collection(name=app_config.CHROMA_COLLECTION_NAME)
+            print("Cleared old ChromaDB collection.")
+    except Exception as e:
+        print(f"Error clearing ChromaDB collection: {e}")
+
+    # 2. Remove the old nodes file 
+    if os.path.exists(app_config.NODES_PATH):
+        os.remove(app_config.NODES_PATH)
+        print("Removed old nodes.pkl file")
+    
+    ingestion_workflow = IngestionWorkflow(config=app_config, timeout=300)
+    initial_event = StartIngestionEvent()
+
+    asyncio.run(ingestion_workflow.run(initial_event))
+    print("--- Background ingestion task finished. ---")
+
+@app.post("/ingest")
+async def trigger_ingestion(background_tasks: BackgroundTasks):
+    """Triggers the data ingestion workflow in the background."""
+    background_tasks.add_task(run_ingestion_task)
+    return {"message": "Data ingestion has been started in the background. It may take a few moments to complete."}
 
 # --- How to run the server ---
 if __name__ == "__main__":

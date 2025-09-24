@@ -12,3 +12,4 @@ streamlit
 requests
 nest_asyncio
 rank_bm25
+python-multipart
