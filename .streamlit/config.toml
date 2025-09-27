@@ -1,0 +1,10 @@
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+port = 8501
+address = "0.0.0.0"
+contentSecurityPolicy = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' data:; connect-src 'self' ws://localhost:8501 ws://127.0.0.1:8501 http://localhost:8000 http://127.0.0.1:8000; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://api:8000; child-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://api:8000; object-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://api:8000;"
+
+[browser]
+gatherUsageStats = false

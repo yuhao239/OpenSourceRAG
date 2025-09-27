@@ -11,7 +11,9 @@ from uuid import uuid4
 
 import chromadb
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Request
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from config import Config
@@ -166,21 +168,32 @@ async def post_query(conversation_id: int, request: QueryRequest):
             query_workflow.context['set_status'] = update_phase
             local_history.append({"role": "user", "content": request.query})
 
+            await db_manager.add_message(conversation_id, 'user', request.query)
+
             result = await query_workflow.run(initial_event)
-            if not result:
+            if result is None:
                 raise RuntimeError("Workflow returned no result.")
 
-            final_answer = result.get("final_answer", "Sorry, an error occurred.")
+            if not isinstance(result, dict):
+                raise RuntimeError(f"Workflow returned unexpected payload of type {type(result).__name__}")
 
-            await db_manager.add_message(conversation_id, 'user', request.query)
+            if result.get("error"):
+                phase = result.get("phase", "query planning")
+                raise RuntimeError(f"Workflow failed during {phase}: {result['error']}")
+
+            final_answer = result.get("final_answer") or "Sorry, an error occurred."
+
             await db_manager.add_message(conversation_id, 'assistant', final_answer, metadata=result)
 
             update_phase("Completed")
             job_record["status"] = "completed"
+            sources = result.get("sources") or []
             job_record["result"] = {
                 "response": final_answer,
                 "metadata": result,
+                "sources": sources,
             }
+
         except Exception as exc:
             job_record["status"] = "failed"
             job_record["error"] = str(exc)
@@ -260,6 +273,45 @@ async def delete_document(filename: str):
     return {"filename": safe_name, "status": "deleted", "ingestion_started": ingestion_started}
 
 
+
+
+@app.get("/documents/view/{filename}")
+async def view_document(filename: str, request: Request):
+    """Streams a document for preview in the UI."""
+    safe_name = _validate_filename(filename)
+    filepath = os.path.join(app_config.DATA_DIR, safe_name)
+
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    allowed_origins = getattr(request.app.state, "allowed_origins", ["*"])
+    allow_credentials = getattr(request.app.state, "allow_credentials", False)
+    origin = request.headers.get("origin")
+    allow_origin = "*"
+    if allowed_origins and "*" not in allowed_origins:
+        if origin in allowed_origins:
+            allow_origin = origin
+        else:
+            allow_origin = allowed_origins[0]
+
+    headers = {
+        "Content-Disposition": f'inline; filename="{safe_name}"',
+        "Access-Control-Allow-Origin": allow_origin,
+        "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range",
+        "X-Frame-Options": "ALLOWALL",
+        "Content-Security-Policy": "frame-ancestors 'self' http://localhost:8501 http://127.0.0.1:8501",
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Accept-Ranges": "bytes",
+    }
+    if allow_credentials and allow_origin != "*":
+        headers["Access-Control-Allow-Credentials"] = "true"
+    if allow_origin != "*":
+        headers["Vary"] = "Origin"
+
+    return FileResponse(filepath, media_type="application/pdf", headers=headers)
+
 @app.post("/ingest")
 async def trigger_ingestion():
     started = schedule_ingestion()
@@ -270,6 +322,41 @@ async def trigger_ingestion():
     return {"message": message, "ingestion_running": _is_ingestion_running()}
 
 
+@app.get("/pdfjs/viewer", response_class=HTMLResponse)
+async def pdfjs_viewer_page():
+    """Serves a lightweight PDF.js viewer page that accepts query params:
+    - file: absolute or API-relative URL to the PDF
+    - page: 1-based page number
+    - search: initial search query to highlight
+    The page parses params on the client side.
+    """
+    viewer_path = os.path.join(os.path.dirname(__file__), "static", "pdfjs_viewer.html")
+    if not os.path.exists(viewer_path):
+        raise HTTPException(status_code=500, detail="PDF.js viewer asset not found.")
+    return FileResponse(viewer_path, media_type="text/html")
+
+
+configured_origins = getattr(app_config, "CORS_ALLOW_ORIGINS", ["*"]) or ["*"]
+if any(origin == "*" for origin in configured_origins):
+    allow_origins = ["*"]
+    allow_credentials = False
+else:
+    allow_origins = configured_origins
+    allow_credentials = True
+
+app.state.allowed_origins = allow_origins
+app.state.allow_credentials = allow_credentials
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allow_origins,
+    allow_credentials=allow_credentials,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Accept-Ranges", "Content-Length", "Content-Range"],
+)
+
 if __name__ == "__main__":
     print("To run the API server, use the following command:")
     print("uvicorn server:app --reload")
+

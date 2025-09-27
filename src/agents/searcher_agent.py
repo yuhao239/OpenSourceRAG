@@ -1,4 +1,4 @@
-# agents/searcher_agent.py
+﻿# agents/searcher_agent.py
 # Retriever implemented with hybrid search + HyDE
 
 import asyncio
@@ -80,6 +80,7 @@ class SearcherAgent:
 
         print(f"Search complete. Found {len(search_results)} unique documents.")
         return list(search_results.values())
+
 
 
 

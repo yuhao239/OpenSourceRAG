@@ -1,38 +1,32 @@
-# database.py
+﻿# database.py
 """
 Manages all interactions with the PostgreSQL database for storing and
 retrieving conversation history.
 """
 
-import asyncpg 
+import asyncpg
 import json
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
 
 class DatabaseManager():
     """Handles all database related operations for the chatbot."""
 
     def __init__(self, dsn: str):
-        """
-        Initializes the DatabaseManager.
-        
-        Args: 
-            dsn (str): The database connection string.
-        """
+        """Initializes the DatabaseManager."""
         self.dsn = dsn
         self.pool: Optional[asyncpg.Pool] = None
 
-    
     async def connect(self):
         """Creates a connection pool to the database."""
         if not self.pool:
             try:
                 self.pool = await asyncpg.create_pool(dsn=self.dsn)
                 print("--- Database connection pool created successfully ---")
-
             except Exception as e:
                 print(f"--- Failed to connect to the database: {e} ---")
                 raise
-        
+
     async def close(self):
         """Closes the connection pool."""
         if self.pool:
@@ -40,9 +34,7 @@ class DatabaseManager():
             print("--- Database connection pool closed. ---")
 
     async def init_db(self):
-        """
-        Initializes the database by creating necessary tables if they don't exist.
-        """
+        """Initializes the database tables if they don't exist."""
         async with self.pool.acquire() as connection:
             await connection.execute("""
                 CREATE TABLE IF NOT EXISTS conversations(
@@ -65,31 +57,15 @@ class DatabaseManager():
         print("--- Database tables initialized ---")
 
     async def create_conversation(self, title: str) -> int:
-        """
-        Creates a new conversation in the database.
-
-        Args:
-            title (str): The title of the conversation.
-
-        Returns:
-            int: The ID of the newly created conversation.
-        """
+        """Creates a new conversation and returns its ID."""
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
                 "INSERT INTO conversations (title) VALUES ($1) RETURNING id", title
             )
             return row['id']
-    
-    async def add_message(self, conversation_id: int, role: str, content: str, metadata: Optional[Dict] = None):
-        """
-        Adds a new message to a specific conversation.
 
-        Args:
-            conversation_id (int): The ID of the conversation.
-            role (str): The role of the message sender ('user' or 'assistant').
-            content (str): The content of the message.
-            metadata (dict, optional): A dictionary of metadata to store.
-        """
+    async def add_message(self, conversation_id: int, role: str, content: str, metadata: Optional[Dict] = None):
+        """Adds a message (with optional metadata) to a conversation."""
         async with self.pool.acquire() as connection:
             metadata_json = json.dumps(metadata) if metadata else None
             await connection.execute(
@@ -98,24 +74,31 @@ class DatabaseManager():
             )
 
     async def get_conversations(self) -> List[Dict]:
-        """Retrieves all conversations from the database."""
+        """Retrieves all conversations."""
         async with self.pool.acquire() as connection:
             rows = await connection.fetch("SELECT id, title, created_at FROM conversations ORDER BY created_at DESC")
             return [dict(row) for row in rows]
-    
+
     async def get_messages(self, conversation_id: int) -> List[Dict]:
-        """
-        Retrieves all messages for a specific conversation.
-
-        Args:
-            conversation_id (int): The ID of the conversation to fetch messages for.
-
-        Returns:
-            List[Dict]: A list of messages, ordered by creation time.
-        """
+        """Retrieves all messages (including metadata) for the given conversation."""
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
-                "SELECT role, content FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC",
+                "SELECT role, content, metadata FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC",
                 conversation_id
             )
-            return [dict(row) for row in rows]
+
+        messages: List[Dict] = []
+        for row in rows:
+            metadata = row.get('metadata')
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except Exception:
+                    metadata = None
+            messages.append({
+                'role': row.get('role'),
+                'content': row.get('content'),
+                'metadata': metadata or {}
+            })
+        return messages
+

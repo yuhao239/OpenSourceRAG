@@ -84,6 +84,8 @@ services:
     environment:
       # The UI finds the API using its service name on the Docker network
       - API_BASE_URL=http://api:8000
+      # The browser needs a public URL to reach the API (default docker host)
+      - PUBLIC_API_BASE_URL=http://localhost:8000
     networks:
       - rag_network
 

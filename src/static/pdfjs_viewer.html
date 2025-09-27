@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF Viewer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; }
+      #viewerContainer { position: absolute; inset: 0; overflow: auto; background: #2c2c2c; }
+      .pdfViewer .page { margin: 10px auto; border: 1px solid #444; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+      #topbar { position: fixed; top: 0; left: 0; right: 0; height: 42px; background: #1f1f1f; color: #fff; display: flex; align-items: center; gap: 8px; padding: 0 10px; z-index: 5; font-family: system-ui, sans-serif; }
+      #viewerContainer { top: 42px; }
+      input, button { height: 28px; border-radius: 4px; border: 1px solid #555; background: #2a2a2a; color: #fff; padding: 0 8px; }
+      input { width: 180px; }
+      button { cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div id="topbar">
+      <label>Page:</label>
+      <input id="pageInput" type="number" min="1" value="1" />
+      <button id="goBtn">Go</button>
+      <label>Search:</label>
+      <input id="searchInput" type="text" placeholder="Find in document" />
+      <button id="findBtn">Find</button>
+    </div>
+    <div id="viewerContainer">
+      <div id="viewer" class="pdfViewer"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.js"></script>
+    <script>
+      (function() {
+        const params = new URLSearchParams(window.location.search);
+        const fileParam = params.get('file') || '';
+        const pageParam = parseInt(params.get('page') || '1', 10);
+        const searchParam = params.get('search') || '';
+
+        // Configure worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        const eventBus = new pdfjsViewer.EventBus();
+        const container = document.getElementById('viewerContainer');
+        const linkService = new pdfjsViewer.PDFLinkService({ eventBus });
+        const findController = new pdfjsViewer.PDFFindController({ linkService, eventBus });
+        const pdfViewer = new pdfjsViewer.PDFViewer({ container, eventBus, linkService, findController, textLayerMode: 2 });
+
+        linkService.setViewer(pdfViewer);
+
+        const pageInput = document.getElementById('pageInput');
+        const searchInput = document.getElementById('searchInput');
+        const goBtn = document.getElementById('goBtn');
+        const findBtn = document.getElementById('findBtn');
+
+        function goToPage(num) {
+          if (!num) return;
+          const n = parseInt(num, 10);
+          if (!Number.isFinite(n)) return;
+          pdfViewer.currentPageNumber = Math.max(1, Math.min(n, pdfViewer.pagesCount || n));
+        }
+
+        function doSearch(query) {
+          if (!query) return;
+          // Use the EventBus API which is stable across pdf.js versions.
+          eventBus.dispatch('find', {
+            type: 'find',
+            query: String(query),
+            phraseSearch: true,
+            caseSensitive: false,
+            highlightAll: true,
+            entireWord: false,
+          });
+        }
+
+        goBtn.addEventListener('click', () => goToPage(pageInput.value));
+        findBtn.addEventListener('click', () => doSearch(searchInput.value));
+
+        // Load the document
+        const loadingTask = pdfjsLib.getDocument({ url: fileParam });
+        loadingTask.promise.then(pdfDocument => {
+          pdfViewer.setDocument(pdfDocument);
+          linkService.setDocument(pdfDocument, null);
+
+          eventBus.on('pagesinit', () => {
+            pageInput.value = String(Math.max(1, pageParam || 1));
+            goToPage(pageParam || 1);
+            if (searchParam) {
+              searchInput.value = searchParam;
+              doSearch(searchParam);
+            }
+          });
+        }).catch(err => {
+          console.error('Failed to load PDF:', err);
+          document.body.innerHTML = '<p style="color:white; font-family: system-ui; padding: 16px;">Failed to load PDF.</p>';
+        });
+      })();
+    </script>
+  </body>
+  </html>

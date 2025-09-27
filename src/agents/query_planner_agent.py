@@ -95,7 +95,26 @@ class QueryPlannerAgent:
         """
 
         print("--- [DEBUG] Prompt constructed. About to call self.llm.acomplete ---")
-        response = await self.llm.acomplete(prompt)
+        try:
+            response = await self.llm.acomplete(prompt)
+        except Exception as exc:
+            error_text = str(exc)
+            print(f"QueryPlannerAgent encountered an error from Ollama: {error_text}")
+            lowercase_error = error_text.lower()
+            model_keywords = (
+                'not found',
+                'no such model',
+                'model not found',
+                'missing model',
+                ' 404',
+            )
+            if any(keyword in lowercase_error for keyword in model_keywords):
+                raise RuntimeError(
+                    f"Ollama could not load the utility model '{self.config.UTILITY_MODEL}'. "
+                    "Make sure it is pulled inside the Ollama container, e.g. "
+                    f"`docker compose exec ollama ollama pull {self.config.UTILITY_MODEL}`."
+                ) from exc
+            raise
         print("--- [DEBUG] LLM call complete. Received response. ---")
 
         try:
@@ -142,3 +161,5 @@ class QueryPlannerAgent:
                 "hyde_document": "Could not generate a hypothetical document.",
                 "query": query,
             }
+
+

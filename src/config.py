@@ -41,4 +41,17 @@ class Config():
     db_port = os.environ.get("DB_PORT", "5432")
 
     db_connection_string = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    cors_origins_env = os.environ.get("CORS_ALLOW_ORIGINS")
+    if cors_origins_env:
+        CORS_ALLOW_ORIGINS = [
+            origin.strip()
+            for origin in cors_origins_env.split(',')
+            if origin.strip()
+        ] or ['*']
+    else:
+        CORS_ALLOW_ORIGINS = [
+            'http://localhost:8501',
+            'http://127.0.0.1:8501',
+        ]
+
 

@@ -1,15 +1,19 @@
-# ui.py
+﻿# ui.py
 """
 Streamlit UI for the Multi-Agent RAG Chatbot.
 """
+import json
 import os
 import time
 from typing import Any, Dict, List
+from urllib.parse import quote
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
+PUBLIC_API_BASE_URL = os.environ.get("PUBLIC_API_BASE_URL", API_BASE_URL)
 POLL_INTERVAL_SECONDS = float(os.environ.get("INGESTION_POLL_INTERVAL", "3"))
 QUERY_POLL_INTERVAL_SECONDS = float(os.environ.get("QUERY_POLL_INTERVAL", "0.7"))
 QUERY_POLL_TIMEOUT = float(os.environ.get("QUERY_POLL_TIMEOUT", "600"))
@@ -40,11 +44,28 @@ def create_conversation(title: str) -> Dict[str, Any] | None:
     return response.json()
 
 
+def _process_message_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = payload.get("metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+    sources = payload.get("sources") or metadata.get("sources") or []
+    return {
+        "role": payload.get("role"),
+        "content": payload.get("content"),
+        "metadata": metadata,
+        "sources": sources,
+    }
+
+
 def get_messages(conversation_id: int) -> List[Dict[str, Any]]:
     response = _safe_request("GET", f"/conversations/{conversation_id}")
     if not response:
         return []
-    return response.json().get("messages", [])
+    messages = response.json().get("messages", [])
+    return [_process_message_payload(msg) for msg in messages]
 
 
 def start_query_job(conversation_id: int, query: str) -> Dict[str, Any] | None:
@@ -98,6 +119,67 @@ def format_timestamp(ts: float | None) -> str:
     return time.strftime("%H:%M:%S", time.localtime(ts))
 
 
+def build_viewer_url(source: Dict[str, Any]) -> str:
+    """Build URL for the internal PDF.js viewer with page + search."""
+    file_name = source.get("file")
+    if not file_name:
+        return ""
+    pdf_endpoint = f"{PUBLIC_API_BASE_URL}/documents/view/{quote(file_name)}"
+    page_number = source.get("page")
+    highlight_keyword = source.get("highlight_keyword")
+
+    from urllib.parse import urlencode, quote as _quote
+    qs = {"file": pdf_endpoint}
+    if page_number:
+        try:
+            qs["page"] = int(page_number)
+        except Exception:
+            pass
+    if highlight_keyword:
+        qs["search"] = highlight_keyword
+    return f"{PUBLIC_API_BASE_URL}/pdfjs/viewer?{urlencode(qs, quote_via=_quote)}"
+
+
+
+def render_pdf_preview(source: Dict[str, Any]):
+    st.divider()
+    title = source.get("file") or "Selected Source"
+    st.subheader(f"Source preview - {title}")
+    pdf_url = build_viewer_url(source)
+    if not pdf_url:
+        st.info("Preview unavailable for this source.")
+        return
+
+    viewer_src = pdf_url
+
+    components.iframe(
+        viewer_src,
+        height=740,
+    )
+def render_sources(prefix: str, sources: List[Dict[str, Any]]):
+    if not sources:
+        return
+    st.caption("_Sources_")
+    for idx, src in enumerate(sources, start=1):
+        label = src.get("file") or "Unknown source"
+        page_label = src.get("page_label")
+        page_number = src.get("page")
+        if page_label:
+            label += f" ({page_label})"
+        elif page_number is not None:
+            label += f" (p.{page_number})"
+
+        excerpt = src.get("excerpt")
+        cols = st.columns([0.8, 0.2])
+        with cols[0]:
+            st.markdown(f"**{idx}.** {label}")
+            if excerpt:
+                st.caption(excerpt)
+        with cols[1]:
+            if st.button("Open", key=f"{prefix}_{idx}"):
+                st.session_state.selected_source = src
+
+
 st.set_page_config(page_title="Multi-Agent RAG Chatbot", layout="wide")
 st.title("Multi-Agent RAG Chatbot")
 
@@ -113,6 +195,8 @@ if "ingestion_completed_at" not in st.session_state:
     st.session_state.ingestion_completed_at = None
 if "last_uploaded_filename" not in st.session_state:
     st.session_state.last_uploaded_filename = None
+if "selected_source" not in st.session_state:
+    st.session_state.selected_source = None
 
 with st.sidebar:
     st.header("Conversations")
@@ -122,6 +206,7 @@ with st.sidebar:
         if new_conv:
             st.session_state.selected_conversation_id = new_conv["conversation_id"]
             st.session_state.messages = []
+            st.session_state.selected_source = None
             st.rerun()
 
     st.subheader("Past Chats")
@@ -133,10 +218,12 @@ with st.sidebar:
             if st.button(f"{conv['title']} (ID: {conv['id']})", key=f"conv_{conv['id']}"):
                 st.session_state.selected_conversation_id = conv["id"]
                 st.session_state.messages = get_messages(conv["id"])
+                st.session_state.selected_source = None
                 st.rerun()
 
 with st.sidebar:
     st.header("Knowledge Base")
+    st.caption("UI build hash: 89164eb4169f2f729a98451bdc77becc49323479")
 
     ingestion_running = get_ingestion_status()
     st.session_state.ingestion_running = ingestion_running
@@ -206,9 +293,10 @@ if st.session_state.selected_conversation_id is None:
 else:
     st.header(f"Conversation ID: {st.session_state.selected_conversation_id}")
 
-    for msg in st.session_state.messages:
+    for msg_index, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg.get("role", "assistant")):
             st.markdown(msg.get("content", ""))
+            render_sources(f"history_{msg_index}", msg.get("sources", []))
 
     if prompt := st.chat_input("Ask me anything about your documents..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -224,6 +312,7 @@ else:
             with st.chat_message("assistant"):
                 status_placeholder = st.empty()
                 answer_placeholder = st.empty()
+                sources_container = st.container()
                 status_placeholder.info("Starting pipeline...")
 
                 start_time = time.time()
@@ -244,12 +333,17 @@ else:
                     if status == "completed":
                         result = job_state.get("result", {})
                         response_content = result.get("response", "Sorry, I encountered an error.")
+                        sources = result.get("sources", [])
                         status_placeholder.empty()
                         answer_placeholder.markdown(response_content)
-                        assistant_entry: Dict[str, Any] = {"role": "assistant", "content": response_content}
-                        metadata = result.get("metadata")
-                        if metadata is not None:
-                            assistant_entry["metadata"] = metadata
+                        with sources_container:
+                            render_sources(f"live_{job_id}", sources)
+                        assistant_entry: Dict[str, Any] = {
+                            "role": "assistant",
+                            "content": response_content,
+                            "metadata": result,
+                            "sources": sources,
+                        }
                         st.session_state.messages.append(assistant_entry)
                         break
 
@@ -264,6 +358,15 @@ else:
 
                     time.sleep(QUERY_POLL_INTERVAL_SECONDS)
 
+viewer_source = st.session_state.get("selected_source")
+if viewer_source:
+    render_pdf_preview(viewer_source)
+
 if st.session_state.ingestion_running:
     time.sleep(POLL_INTERVAL_SECONDS)
     st.rerun()
+
+
+
+
+
