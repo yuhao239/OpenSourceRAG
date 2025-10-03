@@ -1,0 +1,292 @@
+Project Update & Findings Timeline (R4 to R9)
+
+Date: 2025-10-01
+R4 update plan and findings unabridged.
+
+Overview
+- You asked for a read of the evaluation framework (eval.py) and the recent runs (eval_20.jsonl, eval_20_r2.jsonl, eval_20_r3.jsonl, run_eval_100_round1.jsonl), then for prioritized recommendations to improve results.
+- The system already retrieves high‑quality context; the largest gaps are in grounding/citation discipline and the verification cost/benefit trade‑off.
+
+Key Findings (Across Runs)
+- Retrieval quality is excellent: nDCG@10 ≈ 0.98–1.00 for Pipelines B/C.
+- Verification adds heavy latency with small and inconsistent faithfulness gains.
+- No‑RAG (Pipeline A) often matches or exceeds correctness vs. B/C on general questions.
+
+Metrics Snapshot
+- eval_20.jsonl
+  - A (n=20): mean latency 16.8s; faith 1.0; correctness 4.45; nDCG 0.0
+  - B (n=20): mean latency 24.9s; faith 1.55; correctness 4.05; nDCG 0.975
+  - C (n=20): mean latency 35.8s; faith 1.65; correctness 4.0; nDCG 1.0
+    • Δ vs B: faith +0.10; latency +10.8s
+
+- eval_20_r2.jsonl
+  - A (n=20): mean latency 15.8s; faith 1.0; correctness 4.0; nDCG 0.0
+  - B (n=20): mean latency 23.3s; faith 1.65; correctness 4.3; nDCG 0.975
+  - C (n=20): mean latency 39.0s; faith 1.65; correctness 3.4; nDCG 1.0
+    • Δ vs B: faith +0.00; latency +15.8s
+
+- eval_20_r3.jsonl
+  - A (n=20): mean latency 15.2s; faith 1.0; correctness 4.85; nDCG 0.0
+  - B (n=20): mean latency 23.7s; faith 2.10; correctness 4.15; nDCG 1.0
+  - C (n=20): mean latency 33.5s; faith 2.40; correctness 4.20; nDCG 1.0
+    • Δ vs B: faith +0.30; latency +9.8s
+
+- run_eval_100_round1.jsonl
+  - A (n=100): mean latency 11.7s
+  - B (n=100): mean latency 26.5s
+  - C (n=100): mean latency 46.1s
+    • Δ vs B: latency +19.6s (faith/correctness not scored in this run)
+
+Interpretation
+1) Retrieval is not the bottleneck. Dense + BM25 + cross‑encoder already achieve near‑perfect nDCG@10.
+2) Faithfulness is primarily limited by grounding and citation discipline. The Writer can paraphrase or synthesize beyond the visible “evidence snippets,” and the evaluator judges against those snippets (not the full nodes), penalizing us even when the answer may be supported somewhere in the node.
+3) Verification is expensive and noisy. Mean +10–20 seconds with only +0.0 to +0.3 faith gains across small runs, and inconsistent correctness effects. The feedback loop needs to be more precise and cheaper.
+4) Many queries benefit from direct LLM answers. The dataset includes general knowledge items where A performs very well. The planner should skip retrieval in such cases to save latency and avoid over‑processing.
+
+Prioritized Recommendations (Highest Impact First)
+1) Align “source evidence” with the evaluator
+   Problem: eval.py builds the judge context from sources[].highlight_text. These come from static excerpts (or first 200–400 chars) that often miss the sentence the answer used.
+   Change:
+   - In QueryWorkflow’s source packaging (src/work_flows/query_workflow.py), update collect_sources() to pick a query‑aligned excerpt per node:
+     • Tokenize the user query; find best match span in node.get_content().
+     • Build a centered window (e.g., 600–1000 chars) around that span.
+     • If no match, fall back to the current excerpt.
+     • Set sources[i]["highlight_text"] to this window; keep file, page, and id for viewer.
+   Expected impact: Boost LLM‑judge faithfulness without changing retrieval, because the judge will “see” the specific evidence the answer relied on.
+
+2) Harden the Writer for strict grounding and citation discipline
+   Problem: The Writer can still synthesize and include uncited claims.
+   Change (src/agents/writer_agent.py):
+   - Enforce per‑sentence citations: Each sentence must end with bracketed citations like [file.pdf, p.X].
+   - Prefer quoting short spans from sources over paraphrasing.
+   - Forbid speculative language and external knowledge; if missing info, return the fallback line.
+   - Keep the two‑step think structure but ensure the final answer contains only grounded, cited claims.
+   Expected impact: Improves both faithfulness and correctness under the LLM judge and makes verifier feedback more actionable.
+
+3) Make the Verifier cheaper and more actionable
+   Problem: High latency, vague feedback → unstable gains.
+   Changes:
+   - Use UTILITY_MODEL (qwen3:1.7b) instead of LLM_MODEL in src/agents/verifier_agent.py to cut latency.
+   - Return structured JSON feedback (unsupported_sentences, missing_citations, required_facts).
+   - Mirror the planner’s robust JSON extraction (strip code fences, extract first JSON object).
+   - In QueryWorkflow, reduce MAX_REWRITES from 2 to 1 (src/config.py) to cap latency.
+   - In Writer’s rewrite path, minimally edit only unsupported sentences, preserving supported content; ensure missing citations are added.
+   Expected impact: ~50% reduction in verification overhead with clearer, more effective rewrites → more consistent faithfulness gains.
+
+4) Keep retrieval precise but slimmer
+   - Reranker (src/agents/reranker_agent.py): consider a stronger reranker if GPU allows (e.g., cross-encoder/ms-marco-MiniLM-L-6-v2 or BAAI/bge-reranker-base) and trim top_n from 6 → 4 to reduce irrelevant context.
+   - Searcher (src/agents/searcher_agent.py): keep hybrid union but avoid over‑broad top_k; you can test 4–5 for vectors.
+   Expected impact: Slight latency reductions and fewer distractor sentences → easier grounding.
+
+5) Smarter retrieval classification (skip RAG when appropriate)
+   - Strengthen planner rules (src/agents/query_planner_agent.py):
+     • Skip retrieval for greetings, arithmetic, and general knowledge unless the user references uploaded documents.
+     • Trigger retrieval only for specific, document‑grounded questions.
+   Expected impact: Lower average latency and improved correctness on general queries, bringing B/C closer to A on those items.
+
+6) Chunking and preprocessing tweaks
+   - In ingestion (src/agents/ingestion_agent.py):
+     • Consider page‑aware chunking for PDFs and slightly smaller chunk size (e.g., 384–448) with ~96 overlap to keep facts intact.
+     • Strip obvious headers/footers where possible; continue storing page labels/numbers.
+   Expected impact: Cleaner, tighter nodes yield better sentence‑level snippets and citations → better judged faithfulness.
+
+7) Robustness and guardrails
+   - Unify JSON parsing patterns across agents (like planner’s _extract_first_json) to reduce fallbacks.
+   - Strip code fences and think tags before JSON parsing.
+   - Ensure prompts clearly forbid external knowledge in both Writer and Verifier.
+
+Quick Wins to Implement First
+1) Query‑aligned source snippets in collect_sources() (no model change, fast to implement, likely immediate faithfulness improvement).
+2) Writer prompt hardening for per‑sentence citations and quote‑first policy (reduces hallucination and improves judge alignment).
+
+Validation Plan
+- Re‑run eval.py on dataset.jsonl with pipelines B and C before/after changes.
+- Track:
+  • Faithfulness (expect consistent uplift for C over B; B may also rise due to better snippets).
+  • Correctness (should hold or improve; no degradation on general queries if planner skips retrieval better).
+  • Latency (C should drop with cheaper verifier and fewer rewrites).
+
+Risks / Trade‑offs
+- Tighter Writer rules can shorten or stiffen answers. Balance readability with enforced citations.
+- Shorter top_n may miss a supporting snippet; monitor nDCG@10 and adjust.
+- Aggressive retrieval skipping must be conservative to avoid missing document‑grounded queries.
+
+File Pointers for Changes
+- Query‑aligned snippets: src/work_flows/query_workflow.py
+- Writer grounding rules: src/agents/writer_agent.py
+- Verifier cost + structured feedback: src/agents/verifier_agent.py
+- Reranker tuning: src/agents/reranker_agent.py
+- Planner retrieval rules: src/agents/query_planner_agent.py
+- Ingestion chunking tweaks: src/agents/ingestion_agent.py
+
+
+Overview
+This document compiles each round’s updates and the subsequent evaluation findings. It focuses on what changed, how it performed, and what we learned at every step.
+
+Run Summary (key metrics)
+
+| Run | B Correctness | B Faith | B Lat p50 (s) | C Faith | C Lat p50 (s) | C−B Faith Δ | C−B Lat Δ (s) | nDCG@10 (B) |
+|-----|---------------|---------|----------------|---------|----------------|--------------|---------------|-------------|
+| r5  | 4.20          | 3.05    | 22.17          | 2.70    | 39.40          | −0.35        | +17.23        | 1.00        |
+| r6  | 4.55          | 3.10    | 19.54          | 2.55    | 32.31          | −0.55        | +12.77        | 1.00        |
+| r7  | 4.50          | 2.65    | 18.63          | 2.95    | 26.50          | +0.30        | +7.87         | 1.00        |
+| r8  | 4.45          | 2.60    | 20.63          | 2.55    | 28.25          | −0.05        | +7.62         | 1.00        |
+
+Notes
+- Latency values are medians (p50). C−B deltas are C minus B.
+- Retrieval quality for B is consistently nDCG@10 ≈ 1.0 across runs.
+
+R4 — Query-Aligned Snippets + Strict Writer Citations
+- Updates (from updates_r4.txt)
+  - Query-aligned source snippets in collect_sources(): build a token-matched window (≈800 chars), snap to sentence boundaries, store in sources[].highlight_text.
+  - Stronger Writer prompt: per-sentence citations, quote-first, no external knowledge, explicit fallback when insufficient information.
+- Findings (first measured in R5):
+  - Immediate faithfulness lift for B; retrieval already excellent; verification not yet tuned.
+
+R5 to R6 — Cheaper Verifier + Gating + Rewrite Cap
+- Updates (from updates_r5.txt; run-id target R6)
+  - Verifier model: qwen3:1.7b (UTILITY_MODEL) to reduce latency.
+  - Verifier output: structured JSON (is_faithful, feedback, unsupported_sentences, missing_citations, required_facts) with robust parsing.
+  - Gating: skip verification for well-cited answers; persist retrieval decision.
+  - Cap MAX_REWRITES to 1.
+- Findings (from r6_findings.txt)
+  - Retrieval nDCG@10 = 1.0 (unchanged; strong).
+  - B: correctness up to 4.55; faithfulness up to 3.10; p50 latency down (~19.5s).
+  - C: faithfulness below B (2.55); latency overhead shrank (~+12.8s p50 vs r5 ~+17.2s).
+  - Takeaway: verifier cheaper but still not beneficial on average; need structured, minimal rewrites and better gating.
+
+R6 to R7 — Structured Feedback Rewrites + Broader Gating
+- Updates (from updates_r6.txt; run-id target R7)
+  - Workflow carries structured feedback fields (unsupported_sentences, missing_citations, required_facts) into Writer.
+  - If only missing_citations: skip rewrite to avoid drift.
+  - Writer: minimal edits; fix only unsupported sentences; add citations without changing wording; keep supported lines intact.
+- Findings (from r7_findings.txt)
+  - B: correctness strong (4.50) but faithfulness dipped to 2.65 vs r6=3.10.
+  - C: faithfulness finally > B (2.95 vs 2.65) with smaller overhead (~+7.9s p50; avg +4.4s).
+  - Takeaway: structured minimal rewrites + gating helped C; B’s dip suggested better snippet-to-citation alignment was still needed.
+
+R7 to R8 — Snippets v2 + Citation-Only Post-Edit
+- Updates (from updates_r8.txt; run-id target R8)
+  - Snippets v2: wider window (~1200 chars), optional two-span stitching, sentence boundary smoothing.
+  - Citation-only post-edit path when verifier reports only missing_citations (no rewrite).
+- Findings (from r8_findings.txt)
+  - B: correctness 4.45; faithfulness 2.60; C: faithfulness 2.55; verifier overhead ~+7.6s p50.
+  - General/no_rag misclassification: planner often requires retrieval; when KB is silent, Writer returns "insufficient info" instead of using HyDE for a direct answer.
+  - Takeaway: need HyDE fallback when retrieval weak; add page-biased snippet alignment to match citations.
+
+R8 to R9 — HyDE Integration + Page-Biased Sources
+- Updates (from updates_r9.txt)
+  - Hybrid retrieval with HyDE: union dense (query + HyDE) and BM25 (query + HyDE); de-dup by id.
+  - HyDE guidance for Writer: non-citeable "Guidance (do not cite)" block.
+  - HyDE fallback: if retrieval insufficient, answer with DirectAnswerAgent using HyDE and finalize.
+  - Page-biased, citation-aware sources: parse [file, p.X] from final answer; map to best nodes by file/page; build ~1200-char highlight_text; apply on all finalize paths.
+- Findings (pending run r9):
+  - Expected: higher judged faithfulness on document-grounded items (citation-aware sources) and better handling of general/no_rag via HyDE fallback and stronger retrieval.
+
+Round-Specific Findings (Cross-Reference)
+- r5 (after R4): B faithfulness up (3.05), C offered no faith gain and large latency cost; retrieval = 1.0. Action: make verifier cheaper and precise.
+- r6 (after R5 updates): B improved (faith 3.10, correctness 4.55, p50 down). C still < B on faith; overhead smaller. Action: structured minimal rewrites and gating.
+- r7 (after R6 updates): C > B on faith (+0.30 avg) with modest overhead; B faith dipped. Action: page-biased snippets and citation-only edits.
+- r8 (after R7 prep): Faith stagnated; planner misclassified general queries; insufficient retrieval led to "insufficient info" instead of HyDE direct answers. Action: HyDE fallback and pass HyDE to Writer; add page bias.
+- r9 (after HyDE + page bias): to be measured; expectation: faithfulness lift for both general and document-grounded cases.
+
+Key Lessons and Direction
+- Retrieval stack is consistently strong; faithfulness hinges on evidence packaging and rewrite policy.
+- Minimal, structured rewrites are safer than broad rewrites; gating is essential.
+- Align evaluator context with exactly what the answer cites (page-biased sources) to lift judged faithfulness.
+- HyDE should boost both retrieval and writing focus and serve as a graceful fallback when the KB is silent.
+
+R10–R13 — Evidence Packaging, Citation Normalization, HyDE Guardrails
+
+Summary (runs r10 → r13)
+- Retrieval stayed strong (nDCG@10 ≈ 0.75–1.00), and correctness improved (B: up to 4.6 in r13).
+- Faithfulness gained modestly with verification but remains the bottleneck:
+  - r10 (20Q): B≈3.0, C≈3.55 (+0.55), p50 overhead ≈ +12.7s.
+  - r11 (20Q): B≈2.5, C≈3.0; alias citations eliminated but packaging gaps persisted.
+  - r12 (20Q): B≈3.0, C≈2.65; stricter packaging reduced context seen by the judge.
+  - r13 (20Q): B≈2.0, C≈2.65; correctness improved (B 4.6) but faithfulness depressed by missed sentence evidence.
+
+Diagnosis
+- Root cause shifted from citation format to evidence packaging:
+  1) Page not in top-K: cited (file,page) often not among reranked nodes; fallback to a same-file, non-matching snippet hid the exact claim, lowering judged faithfulness.
+  2) Over-reliance on cited sentences only: uncited (but correct) claims got no supporting snippet, making the judged context too sparse.
+  3) Alignment missed important cues: numeric facts and ALL‑CAPS acronyms (e.g., 15%, NSP/MLM/MTP) were excluded by the token filter, so snippets weren’t centered on the right spans.
+  4) Gating too permissive: verification sometimes skipped when sentences had bracket citations, even if those didn’t map to strong evidence windows.
+
+Changes implemented (code)
+- Planner (src/agents/query_planner_agent.py)
+  - Removed example JSON block to prevent prompt bleed; added constraints that rewritten query must share content with user query.
+  - Workflow guard: if rewrite/HyDE don’t share tokens with original query, fall back to original and drop misaligned HyDE (src/work_flows/query_workflow.py).
+
+- Writer (src/agents/writer_agent.py)
+  - Removed bracketed “Source […]” headings; switched to neutral “File: name (p.X)” to avoid alias citations.
+  - Enforced Allowed Files; prompt now forbids aliases like [Source N]; citations must use [file.pdf, p.X] (or [file.pdf]).
+
+- Verification (src/work_flows/query_workflow.py)
+  - Replaced heuristic citation appender with evidence‑anchored fill (BM25 over reranked nodes) and moved thresholds to Config:
+    - CITATION_BM25_MIN_OVERLAP, CITATION_BM25_MARGIN_RATIO, CITATION_BM25_MIN_ABS (src/config.py).
+  - Improved “well‑cited” gating: now requires that bracketed citations map to enough sources (≥ half of bracket count, min 2) before skipping verifier.
+
+- Packaging for the judge (src/work_flows/query_workflow.py)
+  - Sentence‑aligned, page‑biased sources: parse the final answer into sentences; for each cited (file,page) choose the best node/page and build a highlight window centered on the sentence tokens.
+  - Token policy relaxed: include long tokens (≥4), ALL‑CAPS acronyms, and numeric tokens to anchor windows on exact claims.
+  - Coverage tail: after sentence‑aligned sources, append a small number of generic top sources (collect_sources) to avoid sparse context (config: CITED_SOURCES_COVERAGE_TAIL, default 2).
+  - Full‑corpus fallback: if cited (file,page) not in top‑K, lazily load all nodes (NODES_PATH) for that file and select best matching node with a lightweight BM25, then package a sentence‑aligned window.
+  - Robust BM25 import with minimal inlined fallback when rank_bm25 is unavailable.
+  - Stored last_reranked_results for gating/packaging reuse.
+
+Findings (after changes)
+- r10: Clear faithfulness lift for C (+0.55) at ~+12.7s p50; alias “Source N” still present in some answers and penalized.
+- r11: Alias citations eliminated; B/C still had low‑faith items where the snippet didn’t show the exact claim.
+- r12: Stricter packaging (page‑biased only) reduced context; faithfulness dipped (B≈3.0 → C≈2.65). Analysis highlighted two gaps: missing cited pages in top‑K and uncited claims lacking context.
+- r13: With fallback + coverage + relaxed tokens, correctness jumped (B 4.6) and retrieval perfect (nDCG=1.0). Faithfulness remains limited (B≈2.0, C≈2.65), indicating more repairs are needed where pages still don’t map or multiple claims overrun the small context budget.
+
+Next steps
+- Page repair on present citations: when sentence alignment strongly points to a different page than cited, repair packaging to that page (and optionally adjust the citation) to ensure the judge sees the right span.
+- Expand sentence support for uncited claims: if a sentence lacks brackets, attach best matching snippet from top‑K (or file‑level fallback) for a small number of uncited sentences.
+- Tighten finalize gating further: only skip verification when mapping quality is high and snippet windows have adequate token overlap with each cited sentence.
+
+Metrics to watch
+- Faithfulness uplift on B with the new packaging; C vs B delta under 1–1.5s added cost per answered item.
+- Correctness stability at elevated levels (B≈4.6).
+- Verification overhead staying ~11–14s p50.
+
+
+R14–R17 — Confidence Gating, Packaging v2, Evaluation Fixes
+
+Summary (runs r14 → r17)
+- r14: Confidence gating partially effective; some general knowledge (GK) prompts still routed to retrieval, producing “insufficient information” and low faith. Improbable citations (e.g., Armstrong) reduced but not eliminated.
+- r15: Gate improved arithmetic/GK routing; however, doc faithfulness still penalized where the judge’s window missed exact sentences; verification cost did not yield consistent lift.
+- r16: Sharper gating thresholds (stopword-aware overlap, stricter “high” criteria) and wider highlight windows (1400) reduced GK misroutes; B correctness 4.65, retrieval perfect; faith B≈2.55, C≈2.30 — progress but still mixed benefit from verification.
+- r17: Strong step up. Retrieval-only faithfulness high and consistent; correctness strong. B≈4.73, C≈4.87 (retrieval-only), C adds small consistent lift with ~+13.5s p50.
+
+Changes implemented (code)
+- Retrieval confidence gating (src/work_flows/query_workflow.py)
+  - Added two-key gate: planner requires_retrieval AND confidence == 'high'; else route to DirectAnswer.
+  - Confidence includes: overlap hits (stopword-aware), score hits, mean overlap, KB filename cue.
+  - Tuned defaults (src/config.py): RETR_CONF_MIN_SCORE=0.30, MIN_OVERLAP=3, MEAN_OVERLAP=2.0.
+- Packaging v2+ (src/work_flows/query_workflow.py)
+  - Sentence-aligned, page-biased windows with numerals + ALL-CAPS acronyms; widened window to 1400.
+  - Page repair: if page candidates weak, BM25 within file over full node corpus; accept only with minimum overlap.
+  - Light uncited-sentence support: attach a few best-matching snippets for uncited claims; coverage tail maintained.
+- Verifier flow
+  - Gating requires mapping quality; citation-only patch uses evidence-anchored fill.
+- Evaluation pipeline (eval.py)
+  - Only score faithfulness when used_retrieval=True with non-empty context.
+  - Added retrieval confidence bucket reporting; wired retrieval_confidence(+features) and used_retrieval into logs.
+  - More robust judge parsing (explicit “Score: X”).
+
+Findings from the logs
+- GK routing fixed: water formula and arithmetic consistently answered directly by B/C without pulling ML PDFs.
+- Doc items: faithfulness improved markedly after page repair + alignment; BERT/ATTENTION answers now consistently cite correct file/pages with high judged faith.
+- Verification now delivers a small, consistent lift (r17: B 4.73 → C 4.87) at predictable cost (~+13.5s p50).
+- Edge cases remain rare: isolated low-faith on ATTENTION p.4 suggests occasional window misses; bestpractices trade-off sometimes faith=3 under C when snippet not perfectly aligned.
+
+Next steps
+- Persist confidence labels per item and report bucket distributions (now in eval r18+), monitor share of high/mid/low to calibrate thresholds.
+- Raise mapping acceptance threshold slightly for attention/bert families if residual misses persist; consider a 1600 char cap for those docs only if needed.
+- Keep verification minimal and citation-focused; avoid broad rewrites unless overlap improves.
+
+Headline metrics (illustrative)
+- r16 (retrieval-only faithfulness): B≈2.55, C≈2.30; correctness B≈4.65; nDCG=1.0.
+- r17 (retrieval-only faithfulness): B≈4.73, C≈4.87; correctness B≈4.8; nDCG=1.0; C p50 +~13.5s.

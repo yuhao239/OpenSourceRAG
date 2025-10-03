@@ -52,28 +52,62 @@ class SearcherAgent:
         print("Initialized SearcherAgent.")
 
     async def asearch(self, query: str, hyde_document: str, top_k: int = 5) -> List[NodeWithScore]:
-        """Performs hybrid search against the knowledge base."""
+        """Performs hybrid search using both dense and sparse channels with HyDE augmentation.
+
+        Strategy:
+        - Dense: embed both the HyDE document and the original query; union their results.
+        - Sparse: run BM25 for both the original query and the HyDE text; union results.
+        - De-duplicate by node id; return a combined set for downstream reranking.
+        """
         print(f"\n--- Searching for documents related to: '{query}' ---")
 
-        query_embedding = await self.embed_model.aget_text_embedding(hyde_document)
-
-        vector_results = self.vector_store.query(
-            VectorStoreQuery(
-                query_embedding=query_embedding,
-                similarity_top_k=top_k
-            )
-        )
-
         nodes_with_scores: List[NodeWithScore] = []
-        for node, score in zip(vector_results.nodes or [], vector_results.similarities or []):
-            nodes_with_scores.append(NodeWithScore(node=node, score=score))
 
+        # Dense via HyDE
+        try:
+            hyde_embedding = await self.embed_model.aget_text_embedding(hyde_document)
+            hyde_vec = self.vector_store.query(
+                VectorStoreQuery(
+                    query_embedding=hyde_embedding,
+                    similarity_top_k=top_k
+                )
+            )
+            for node, score in zip(hyde_vec.nodes or [], hyde_vec.similarities or []):
+                nodes_with_scores.append(NodeWithScore(node=node, score=score))
+        except Exception as exc:
+            print(f"Dense retrieval (HyDE) failed: {exc}")
+
+        # Dense via original query (helps when HyDE misses terms)
+        try:
+            query_embedding = await self.embed_model.aget_text_embedding(query)
+            q_vec = self.vector_store.query(
+                VectorStoreQuery(
+                    query_embedding=query_embedding,
+                    similarity_top_k=top_k
+                )
+            )
+            for node, score in zip(q_vec.nodes or [], q_vec.similarities or []):
+                nodes_with_scores.append(NodeWithScore(node=node, score=score))
+        except Exception as exc:
+            print(f"Dense retrieval (query) failed: {exc}")
+
+        # Sparse via BM25 for both query and HyDE
         bm25_results: List[NodeWithScore] = []
         if self.bm25_retriever is not None:
-            bm25_results = await asyncio.to_thread(self.bm25_retriever.retrieve, query)
+            try:
+                bm25_q = await asyncio.to_thread(self.bm25_retriever.retrieve, query)
+                bm25_results.extend(bm25_q)
+            except Exception as exc:
+                print(f"BM25 (query) failed: {exc}")
+            try:
+                bm25_hyde = await asyncio.to_thread(self.bm25_retriever.retrieve, hyde_document)
+                bm25_results.extend(bm25_hyde)
+            except Exception as exc:
+                print(f"BM25 (HyDE) failed: {exc}")
         else:
-            print("BM25 retriever is not initialized; returning vector results only.")
+            print("BM25 retriever is not initialized; using dense only.")
 
+        # Union and de-duplicate
         search_results = {}
         for result in nodes_with_scores + bm25_results:
             search_results[result.id_] = result

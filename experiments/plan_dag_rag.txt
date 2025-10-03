@@ -1,0 +1,187 @@
+Plan — Base DAG (Plan‑RAG‑inspired) for Our RAG Pipeline
+
+1) Goals and Scope
+- Shift planning from single-query to a structured, light-weight DAG of atomic subqueries.
+- Parallelize retrieval across independent subqueries; keep rerank and writer mostly intact (Phase 1).
+- Enforce “attribution by design” by selecting at most one document per subquery (default top‑1).
+- Maintain full backward compatibility and minimal code surface area for MVP.
+
+
+2) High-Level Architecture Changes
+- Planner output (DAG): Extend QueryPlannerAgent to return a JSON object that includes subqueries.
+  Schema (added fields):
+    {
+      "query": string,                  // existing, sanitized standalone rewrite
+      "requires_retrieval": boolean,    // existing
+      "hyde_document": string,          // existing (global; optional per-subquery in Phase 2)
+      "subqueries": [
+        {
+          "id": "s1",                  // unique id, stable across the run
+          "text": "…",                 // atomic subquery text (contains at least 1 content token from user)
+          "parents": ["s0"],           // parent subqueries (may be empty)
+          "hints": {
+            "must_include": ["…"],    // tokens/phrases
+            "synonyms": ["…"],        // alternates for expansion
+            "sections": ["Method"],   // section cues to bias rerank (Phase 2)
+            "top_k": 5                 // initial per-subquery top_k (cap in config)
+          }
+        },
+        …
+      ]
+    }
+- Config flags (src/config.py):
+  - PLANNER_ENABLE_DAG = bool (default: False)
+  - SUBQUERY_MAX = int (default: 4)
+  - SUBQUERY_TOPK_BASE = int (default: 5)
+  - SUBQUERY_MAX_ITERS = int (default: 1)        // retry budget for dynamic query
+  - SUBQUERY_TOPK_STEP = int (default: 3)
+  - ATTRIBUTION_TOP_N = int (default: 1)         // docs kept per subquery for attribution
+  - COVERAGE_MIN_RATIO = float (default: 0.5)    // telemetry/gating only in Phase 1
+  - SECTION_BOOST_WEIGHT = float (default: 0.2)  // Phase 2
+
+
+3) Workflow Changes (Phase 1 MVP)
+3.1 Planning (start_query_planning)
+- Call QueryPlannerAgent as today; if PLANNER_ENABLE_DAG, request subqueries in JSON.
+- Sanitize: ensure each subquery shares at least one non‑stopword with user query; drop or rewrite otherwise.
+- Persist in context:
+  - context["dag_subqueries"])  -> list[dict]
+  - context["dag_edges"])       -> derived from parents for ordering
+
+3.2 Retrieval (start_search)
+- If PLANNER_ENABLE_DAG and subqueries present:
+  - Topologically order subqueries by parents; process by depth.
+  - Within a depth, run retrieval concurrently (asyncio.gather) per subquery:
+    - Build query text = subquery.text (Phase 1: reuse global hyde_document; Phase 2: per-subquery HyDE).
+    - Call SearcherAgent.asearch(query_text, hyde_document, top_k=hints.top_k or SUBQUERY_TOPK_BASE).
+    - Rerank results (existing RerankerAgent).
+    - Relevance expert: keep top‑1 (or ATTRIBUTION_TOP_N) per subquery for attribution by design.
+  - Compute coverage metrics:
+    - covered_subqueries = count with >=1 kept node
+    - coverage_ratio = covered_subqueries / total_subqueries
+  - Persist in context + result telemetry: retrieval_confidence_features.update({
+      "subquery_count": N, "covered_count": C, "coverage_ratio": ratio
+    })
+  - Union kept nodes across subqueries to feed WriterAgent (no prompt changes in Phase 1).
+- Else (no DAG): keep existing path unchanged.
+
+3.3 Confidence & Gating (unchanged logic; augmented telemetry)
+- Continue computing existing retrieval confidence label. Also report coverage_ratio.
+- Do not hard‑gate by coverage in MVP; only log. (Optional heuristic: if label == "mid" and coverage_ratio < COVERAGE_MIN_RATIO, consider 1 retry round with increased top_k.)
+
+3.4 Source Packaging (compat‑first)
+- Extend source entries with optional fields: "subquery_id", "rank_in_subquery".
+- Keep existing UI behavior unchanged; future work can group sources by subquery.
+
+
+4) Agent Changes
+4.1 QueryPlannerAgent (Phase 1)
+- Prompt: ask for a compact DAG of <= SUBQUERY_MAX atomic subqueries with parents + hints; keep strict JSON output with fields defined above. Enforce that each subquery text reuses at least one content token from the original question.
+- Parsing: reuse robust JSON extraction; fallback to single‑query plan if malformed.
+
+4.2 SearcherAgent (Phase 1)
+- Add a thin helper for per‑subquery search that accepts (query_text, hyde_text, top_k) and returns NodeWithScore list; internally delegate to existing asearch with given top_k.
+- (Optional) Filter by must_include tokens post‑retrieval: boost or keep results containing any must_include tokens.
+
+4.3 RerankerAgent (Phase 1)
+- No changes required for MVP. (Phase 2: small section keyword boost before/after cross-encoder.)
+
+4.4 WriterAgent (Phase 1)
+- No prompt change for MVP: still compose a single grounded answer from the union of results. (Phase 2 will add a subanswer→aggregator structure.)
+
+4.5 VerifierAgent (Phase 1)
+- No changes. (Phase 2: map unsupported sentences back to subqueries for targeted repair.)
+
+
+5) Data and Telemetry
+- Result payload (StopEvent result) already includes retrieval_confidence and features. Add:
+  - retrieval_confidence_features["subquery_count"], ["covered_count"], ["coverage_ratio"].
+- Sources: add subquery_id and rank_in_subquery when available.
+
+
+6) Rollout Plan
+Phase 1 (this iteration)
+- Config flags + planner prompt & parsing for DAG.
+- Workflow depth-ordered per‑subquery retrieval (concurrent within depth), top‑1 per subquery, union for writer.
+- Coverage telemetry added to results; no gating changes. Writer and verifier unchanged.
+
+Phase 2 (next)
+- Per‑subquery HyDE generation (planner emits optional "hyde" for each subquery, or derive with UTILITY_MODEL).
+- Section‑aware boosting in reranking based on hints.sections.
+- Subanswer→Aggregator in Writer prompt (ensure per‑sentence citations per subanswer, then aggregate).
+- Simple “critic expert” loop: for subqueries with weak support, re‑retrieve once with expanded synonyms or increased top_k.
+- Verification‑driven backtracking: map unsupported sentences → subquery ids; re‑retrieve/rewrite only affected subqueries.
+
+Phase 3 (optional refinements)
+- Dynamic query rewriting expert: subquery‑level expansion using synonyms/aliases when retrieval is poor.
+- Budgeted iterative retrieval per subquery; stop when marginal gain < threshold.
+- UI grouping of sources by subquery; DAG visualization for debugging.
+
+
+7) Risks and Mitigations
+- LLM planner drift (bad DAG):
+  - Mitigation: sanitize subqueries to include query tokens; cap SUBQUERY_MAX; fallback to single‑query on parse failure.
+- Latency regression from parallel retrieval:
+  - Mitigation: shallow DAG and modest SUBQUERY_TOPK_BASE; concurrency within depth only; single doc per subquery.
+- Writer prompt still holistic (Phase 1):
+  - Mitigation: ensure union of top‑1 per subquery keeps the context small and relevant; Phase 2 will adopt subanswer aggregation.
+- Reranker mismatch for section cues (Phase 1):
+  - Mitigation: defer to Phase 2 lightweight keyword boost if needed.
+
+
+8) Implementation Tasks (Concrete Diffs)
+T1 — Config (src/config.py)
+- Add booleans/ints/floats: PLANNER_ENABLE_DAG, SUBQUERY_MAX, SUBQUERY_TOPK_BASE, SUBQUERY_MAX_ITERS, SUBQUERY_TOPK_STEP, ATTRIBUTION_TOP_N, COVERAGE_MIN_RATIO, SECTION_BOOST_WEIGHT.
+
+T2 — Planner (src/agents/query_planner_agent.py)
+- Extend prompt to request DAG fields; limit subqueries; include parent ids and hints.
+- Parse JSON → plan dict; validate fields; if invalid, set plan["subqueries"] = [].
+
+T3 — Workflow Planning (src/work_flows/query_workflow.py)
+- Save plan["subqueries"] and compute topological order by parents. Store: context["dag_subqueries"], context["dag_layers"].
+- Keep existing guards for rewritten query alignment.
+
+T4 — Workflow Search (src/work_flows/query_workflow.py)
+- If dag_subqueries:
+  - For each depth layer: asyncio.gather(per‑subquery retrieval and rerank).
+  - Keep top‑1 (or N) per subquery; accumulate union.
+  - Compute coverage metrics and attach to retrieval_confidence_features.
+  - Proceed to rerank (already performed) → writer unchanged.
+
+T5 — Searcher (src/agents/searcher_agent.py)
+- Add helper: async def asearch_subquery(self, q: str, hyde: str | None, top_k: int) -> List[NodeWithScore]:
+  - Delegate to existing asearch, passing top_k; optionally post‑filter by must_include tokens (string contains or token overlap).
+
+T6 — Source Packaging (src/work_flows/query_workflow.py)
+- When building source_refs for DAG path, add optional fields: subquery_id, rank_in_subquery (keep backward‑compatible keys).
+
+T7 — Telemetry (src/work_flows/query_workflow.py)
+- Include coverage metrics in StopEvent payload (retrieval_confidence_features).
+
+T8 — Documentation
+- README: brief mention of PLANNER_ENABLE_DAG and what it does.
+- Comment blocks in modified files describing new fields.
+
+
+9) Test / Validation Plan
+- Functional sanity:
+  - With PLANNER_ENABLE_DAG=False, baseline answers identical on sample prompts.
+  - With PLANNER_ENABLE_DAG=True, logs include subquery_count>0; coverage_ratio reported; sources still render in UI.
+- Latency:
+  - Measure p50 end‑to‑end over a small suite (experiments/scripts/eval.py). Compare B vs. B(DAG‑MVP) using current judge.
+- Faithfulness:
+  - Expect equal or improved faithfulness on multi‑facet queries due to top‑1 per subquery constraint and diversified recall.
+
+
+10) Future Enhancements (Phase 2/3 Quick Notes)
+- Per‑subquery HyDE: small guided paragraph per subquery; improves recall targeted to each facet.
+- Section boost: heading keyword regex (Abstract/Method/Experiments/Conclusion) → small score bonus.
+- Critic loop: subquery‑level answerability check; re‑retrieve only where support is weak.
+- Verification backtracking: rerun only affected subqueries and aggregate anew; keep rewrite budget.
+
+
+Review Summary
+- The plan is incremental, keeps current UX/APIs, and introduces DAG gently via config flags.
+- Highest value with lowest risk: per‑subquery retrieval + top‑1 attribution and coverage telemetry.
+- Clear path to Phase 2 adds meaningful gains (subanswer aggregation, critic, sections) without heavy refactors.
+

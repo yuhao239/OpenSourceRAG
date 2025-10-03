@@ -1,0 +1,100 @@
+{"qid":"q1","question":"What does BERT stand for?","gold_answer":"BERT stands for Bidirectional Encoder Representations from Transformers.","gold_citations":["bert.pdf"]}
+{"qid":"q2","question":"What pretraining tasks does BERT use?","gold_answer":"Masked language modeling (MLM) and next sentence prediction (NSP).","gold_citations":["bert.pdf"]}
+{"qid":"q3","question":"Which corpora were used to pre-train BERT?","gold_answer":"BooksCorpus and English Wikipedia.","gold_citations":["bert.pdf"]}
+{"qid":"q4","question":"How do BERT Base and BERT Large differ architecturally?","gold_answer":"Base: 12 layers, 768 hidden size, 12 heads (~110M params). Large: 24 layers, 1024 hidden size, 16 heads (~340M params).","gold_citations":["bert.pdf"]}
+{"qid":"q5","question":"What is WordPiece, and how are [CLS] and [SEP] used in BERT?","gold_answer":"WordPiece is the subword tokenizer. [CLS] is used for classification outputs; [SEP] separates segments in sentence pairs.","gold_citations":["bert.pdf"]}
+{"qid":"q6","question":"What is the common maximum input length for BERT?","gold_answer":"Up to 512 tokens.","gold_citations":["bert.pdf"]}
+{"qid":"q7","question":"How does BERT learn bidirectional context compared to left-to-right LMs?","gold_answer":"MLM lets BERT condition on both left and right context, unlike left-to-right LMs that see only preceding tokens.","gold_citations":["bert.pdf"]}
+{"qid":"q8","question":"What does Next Sentence Prediction (NSP) teach in BERT?","gold_answer":"NSP teaches sentence-level coherence by predicting if one sentence follows another.","gold_citations":["bert.pdf"]}
+{"qid":"q9","question":"How is BERT fine-tuned for classification tasks?","gold_answer":"Use the [CLS] representation fed to a task-specific head; fine-tune end-to-end.","gold_citations":["bert.pdf"]}
+{"qid":"q10","question":"Name two benchmarks where BERT performed strongly (e.g., GLUE, SQuAD).","gold_citations":["bert.pdf"]}
+{"qid":"q11","question":"What core idea did 'Attention Is All You Need' introduce?","gold_answer":"The Transformer: sequence modeling using attention only, no recurrence or convolutions.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q12","question":"What is the complexity of self-attention with sequence length n?","gold_answer":"O(n^2) due to pairwise interactions across positions.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q13","question":"Why scale the dot-product in attention by 1/sqrt(d_k)?","gold_answer":"To keep softmax inputs in a stable range; avoids saturation and tiny gradients.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q14","question":"What does multi-head attention enable?","gold_answer":"Parallel attention over multiple subspaces and positions, capturing diverse relations.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q15","question":"What positional encodings are used in the original Transformer?","gold_answer":"Fixed sinusoidal positional encodings.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q16","question":"How many layers do the encoder and decoder have in the base Transformer?","gold_answer":"Six layers each (encoder and decoder).","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q17","question":"What is the typical FFN inner dimension in the base Transformer?","gold_answer":"2048 (with d_model=512).","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q18","question":"Why use masked self-attention in the decoder?","gold_answer":"To prevent attending to future tokens and enforce autoregressive generation.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q19","question":"What training and decoding are common for Transformer seq2seq?","gold_answer":"Cross-entropy with teacher forcing; beam search decoding.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q20","question":"What were the training costs for the big Transformer model?","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q21","question":"What deployment limitations are stated for DeepSeek-V3?","gold_citations":["deepseekv3.pdf"]}
+{"qid":"q22","question":"Summarize DeepSeek-V3 architecture (experts, efficiency).","gold_citations":["deepseekv3.pdf"]}
+{"qid":"q23","question":"Which benchmarks does DeepSeek-R1 emphasize for reasoning (e.g., AIME 2024)?","gold_citations":["deepseekr1.pdf"]}
+{"qid":"q24","question":"How does DeepSeek-R1 perform on AIME 2024 vs OpenAI-01-1217?","gold_citations":["deepseekr1.pdf"]}
+{"qid":"q25","question":"What training methods or augmentations are noted for DeepSeek-R1?","gold_citations":["deepseekr1.pdf"]}
+{"qid":"q26","question":"What efficiency techniques are discussed for DeepSeek-V3?","gold_citations":["deepseekv3.pdf"]}
+{"qid":"q27","question":"What safety or guardrails are mentioned for DeepSeek V3/R1?","gold_citations":["deepseekv3.pdf","deepseekr1.pdf"]}
+{"qid":"q28","question":"What top-k settings are recommended for hybrid retrieval?","gold_answer":"Start with k=10 for recall; tune 5–10 based on latency and reranker use.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q29","question":"What chunk sizes and overlaps are recommended?","gold_answer":"Chunk 512–800 tokens with 10–20% overlap as a practical default.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q30","question":"When does a cross-encoder reranker help most?","gold_answer":"When initial retrieval returns mixed-quality candidates or larger k (>=10).","gold_citations":["bestpractices.pdf"]}
+{"qid":"q31","question":"What is HyDE and why can it help retrieval?","gold_answer":"Generate a hypothetical answer/summary to embed and retrieve similar true passages, bridging lexical gaps.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q32","question":"Outline a verification step to reduce hallucinations.","gold_answer":"Compare the draft answer to sources, flag unsupported claims, then rewrite guided by feedback.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q33","question":"Which latency metrics should be tracked and why?","gold_answer":"Track p50 and p95 end-to-end latency to capture typical and tail performance for UX and capacity planning.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q34","question":"Name common retrieval metrics for RAG evaluation.","gold_answer":"nDCG@k as a primary ranking metric; MRR@k and mAP@k as complements.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q35","question":"What does nDCG@10 measure?","gold_answer":"How well the top-10 results are ranked vs an ideal ordering, with discounting for lower ranks.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q36","question":"What fields should a per-query log include?","gold_answer":"run_id, qid, pipeline, retriever settings (top-k, alpha), chunk size/overlap, reranker on/off, LLM info, timings, retrieved IDs, citations used, and the final answer.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q37","question":"How to combine BM25 and dense retrieval effectively?","gold_answer":"Merge candidates, deduplicate by doc ID, then rerank with a cross-encoder; tune mixture and k for recall/precision.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q38","question":"What guardrails should be used when reporting RAG metrics?","gold_answer":"Version datasets/configs with run_id, keep raw logs, avoid overclaiming, and report deltas with sample sizes.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q39","question":"How should chunking adapt to PDFs with many figures/tables?","gold_citations":["bestpractices.pdf","docagent.pdf"]}
+{"qid":"q40","question":"What trade-offs arise when enabling verification in RAG?","gold_answer":"Improved faithfulness and sometimes correctness at the cost of added latency.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q41","question":"Which special tokens mark classification and sentence boundaries in BERT?","gold_answer":"[CLS] for classification; [SEP] for sentence boundaries and segment separation.","gold_citations":["bert.pdf"]}
+{"qid":"q42","question":"How is masked language modeling applied in BERT?","gold_answer":"Mask a subset of tokens (e.g., 15%) and train the model to predict the originals; some are random or unchanged to avoid mismatch.","gold_citations":["bert.pdf"]}
+{"qid":"q43","question":"What are BERT Base and BERT Large parameter counts?","gold_answer":"About 110M (Base) and 340M (Large).","gold_citations":["bert.pdf"]}
+{"qid":"q44","question":"How does BERT handle sentence pairs (e.g., NLI)?","gold_answer":"Concatenate with [SEP] and add segment embeddings (A/B). Use [CLS] for classification.","gold_citations":["bert.pdf"]}
+{"qid":"q45","question":"Name two datasets with strong Transformer results.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q46","question":"What do residual connections and layer normalization achieve in the Transformer?","gold_answer":"Residuals ease optimization via skip paths; layer norm stabilizes activations for better convergence.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q47","question":"Describe the position-wise feed-forward sublayer.","gold_answer":"Two linear layers with a non-linearity, applied independently per position to increase capacity.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q48","question":"Why can attention model long-range dependencies better than RNNs?","gold_answer":"It creates direct paths between any positions, avoiding long gradient chains and enabling parallelism.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q49","question":"What is label smoothing and why use it?","gold_answer":"It assigns small probability to non-target classes to prevent overconfidence; often improves generalization.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q50","question":"How can beam search affect translation quality?","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q51","question":"List two differences between BERT and a typical left-to-right LM.","gold_citations":["bert.pdf"]}
+{"qid":"q52","question":"How are special tokens used differently in BERT vs the original Transformer?","gold_citations":["bert.pdf","attention_is_all_you_need.pdf"]}
+{"qid":"q53","question":"What is HyDE in RAG?","gold_answer":"Generate a hypothetical document or answer to embed for improved retrieval recall.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q54","question":"When might BM25-only outperform dense retrieval?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q55","question":"Name one way to estimate cost per query in RAG.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q56","question":"What are pros and cons of increasing chunk overlap?","gold_answer":"Pro: fewer boundary issues and better recall for small spans. Con: larger index and redundancy; start with 10–20%.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q57","question":"Give a logging/run_id convention example for versioning.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q58","question":"What should be held constant when comparing A vs B vs C?","gold_answer":"Fix the LLM, temperature, max tokens, and retriever constants; vary only the component under test (e.g., verification).","gold_citations":["bestpractices.pdf"]}
+{"qid":"q59","question":"How to report nDCG and latency changes transparently?","gold_answer":"Use whole-number percentages and include sample sizes; state any p50 increase plainly and lead with quality gains.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q60","question":"What is the role of a cross-encoder reranker vs a bi-encoder retriever?","gold_answer":"Bi-encoders provide fast vector search; cross-encoders score query-document pairs precisely for re-ranking.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q61","question":"How are citations represented in answers for auditability?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q62","question":"What should the assistant do if context is insufficient?","gold_answer":"Avoid fabricating; state insufficiency and suggest retrieving more or asking for clarification.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q63","question":"Hello, how are you today?"}
+{"qid":"q64","question":"What is the capital of Canada?"}
+{"qid":"q65","question":"Tell me a joke about GPUs."}
+{"qid":"q66","question":"Draft a polite email asking for a meeting next week."}
+{"qid":"q67","question":"Summarize the Transformer's main contributions in two sentences.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q68","question":"Contrast BERT Base and Large in layers and heads.","gold_citations":["bert.pdf"]}
+{"qid":"q69","question":"Compare DeepSeek-R1 and DeepSeek-V3 at a high level.","gold_citations":["deepseekr1.pdf","deepseekv3.pdf"]}
+{"qid":"q70","question":"When should top-k be reduced from 10 to 5 in RAG?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q71","question":"What UI features help users inspect citations effectively?","gold_citations":["docagent.pdf"]}
+{"qid":"q72","question":"Which PDFs are hardest for text chunkers to segment well, and why?","gold_citations":["bestpractices.pdf","docagent.pdf"]}
+{"qid":"q73","question":"Explain in Chinese the role of self-attention in Transformer.","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q74","question":"Explain in French the goal of NSP in BERT.","gold_citations":["bert.pdf"]}
+{"qid":"q75","question":"In Japanese: How are positions encoded in the Transformer?","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q76","question":"What does 'HyDE' stand for in RAG?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q77","question":"What trade-offs come from increasing the LLM context window?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q78","question":"Rewrite the follow-up 'What about its safety features?' after DeepSeek V3 discussion.","gold_citations":["deepseekv3.pdf","bestpractices.pdf"]}
+{"qid":"q79","question":"The Trnasformer paper's main idea is... (typo).","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q80","question":"BERT's 'NSR' objective stands for what? (wrong acronym).","gold_citations":["bert.pdf"]}
+{"qid":"q81","question":"List three metrics for fair RAG comparison.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q82","question":"Give two reasons a reranker hurts latency but helps quality.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q83","question":"Where are source filenames for citations surfaced in this project?","gold_citations":["docagent.pdf","bestpractices.pdf"]}
+{"qid":"q84","question":"What are good defaults for alpha and top-k in hybrid retrieval?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q85","question":"What's the difference between faithfulness and answer correctness?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q86","question":"Give an example guardrail when reporting speedups.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q87","question":"Which files define retrieval, reranking, and writing steps in this repo?","gold_citations":["docagent.pdf","bestpractices.pdf"]}
+{"qid":"q88","question":"List two scenarios where BM25 may beat dense retrieval.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q89","question":"What should you do if RAG returns mixed-quality results at k=10?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q90","question":"Which paper introduced multi-head attention and how many heads in the base model?","gold_citations":["attention_is_all_you_need.pdf"]}
+{"qid":"q91","question":"What are symptoms of 'lost in the middle' and how can ordering help?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q92","question":"How should the system respond to greetings and small talk?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q93","question":"Briefly compare Transformer and BERT training objectives.","gold_citations":["attention_is_all_you_need.pdf","bert.pdf"]}
+{"qid":"q94","question":"What limits, if any, are imposed on DeepSeek-V3 usage/redistribution?","gold_citations":["deepseekv3.pdf"]}
+{"qid":"q95","question":"Does DeepSeek-R1 provide step-by-step reasoning examples?","gold_citations":["deepseekr1.pdf"]}
+{"qid":"q96","question":"When should verification be skipped in production RAG?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q97","question":"Give an example of a query where retrieval is unnecessary.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q98","question":"Propose a simple run_id naming scheme for A vs C experiments.","gold_citations":["bestpractices.pdf"]}
+{"qid":"q99","question":"What is a reasonable overlap for chunk size 800?","gold_citations":["bestpractices.pdf"]}
+{"qid":"q100","question":"If numbers are missing from retrieved sources, what should the assistant do?","gold_answer":"Avoid fabricating; state the gap and propose retrieving additional sources.","gold_citations":["bestpractices.pdf"]}

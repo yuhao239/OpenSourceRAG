@@ -59,3 +59,7 @@ class RewriteEvent:
     reranked_results: List[NodeWithScore]
     feedback: str
     previous_answer: str
+    # Structured verification details (optional)
+    unsupported_sentences: List[str] = field(default_factory=list)
+    missing_citations: List[str] = field(default_factory=list)
+    required_facts: List[str] = field(default_factory=list)

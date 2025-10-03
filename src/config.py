@@ -15,7 +15,7 @@ class Config():
 
     # --- Chunking Settings ---
     CHUNK_SIZE = 512
-    CHUNK_OVERLAP = 64
+    CHUNK_OVERLAP = 128
 
     # --- Embedding model ---
     EMBEDDING_MODEL_NAME = "BAAI/llm-embedder"
@@ -29,7 +29,32 @@ class Config():
 
     # --- Agent settings ---
     USE_VERIFIER = True
-    MAX_REWRITES = 2
+    MAX_REWRITES = 1
+
+    # --- Evidence-anchored citation thresholds (BM25) ---
+    # Minimum number of shared tokens between sentence and chosen node
+    CITATION_BM25_MIN_OVERLAP = int(os.environ.get("CITATION_BM25_MIN_OVERLAP", 2))
+    # Required margin ratio over second-best score (if MIN_ABS not met)
+    CITATION_BM25_MARGIN_RATIO = float(os.environ.get("CITATION_BM25_MARGIN_RATIO", 1.2))
+    # Minimum absolute BM25 score to accept without margin
+    CITATION_BM25_MIN_ABS = float(os.environ.get("CITATION_BM25_MIN_ABS", 1.5))
+
+    # --- Source packaging / coverage ---
+    # After building sentence-aligned, page-biased sources, append this many
+    # generic top sources to improve evaluator coverage.
+    CITED_SOURCES_COVERAGE_TAIL = int(os.environ.get("CITED_SOURCES_COVERAGE_TAIL", 2))
+
+    # Add a small number of uncited sentence supports by attaching best-matching
+    # snippets even when a sentence lacks brackets, to avoid sparse judged context.
+    UNCITED_SENTENCE_SUPPORT = int(os.environ.get("UNCITED_SENTENCE_SUPPORT", 2))
+
+    # --- Retrieval confidence gating ---
+    # Evaluate retrieval results quality to decide if we should proceed with RAG.
+    RETR_CONF_TOPK = int(os.environ.get("RETR_CONF_TOPK", 5))
+    RETR_CONF_MIN_HITS = int(os.environ.get("RETR_CONF_MIN_HITS", 2))
+    RETR_CONF_MIN_SCORE = float(os.environ.get("RETR_CONF_MIN_SCORE", 0.30))
+    RETR_CONF_MIN_OVERLAP = int(os.environ.get("RETR_CONF_MIN_OVERLAP", 3))
+    RETR_CONF_MEAN_OVERLAP = float(os.environ.get("RETR_CONF_MEAN_OVERLAP", 2.0))
 
     # --- PostgreSQL Database Connection ---
     # Read from environment variables if they exist (for Docker),

@@ -1,4 +1,4 @@
-# agents/query_planner_agent.py
+﻿# agents/query_planner_agent.py
 
 import json
 from typing import List, Optional
@@ -70,28 +70,28 @@ class QueryPlannerAgent:
             If the query is already standalone, use it as is.
 
         2.  **Classify Retrieval:** Determine if this rewritten query requires searching an external knowledge base.
-            - Retrieval is **not needed** for simple greetings, conversational filler, or basic general knowledge.
+            - Retrieval is **not needed** for simple greetings, conversational filler, or anything that you would consider within the scope of general knowledge.
             - Retrieval is **required** for queries asking for specific, detailed information.
+            - If the query references a specific paper, model, dataset, release/version, or asks for sources/citations (e.g., "where did you find that"), set `requires_retrieval` to true.
+            - When uncertain, prefer `requires_retrieval: true`.
 
-        3.  **Generate HyDE Document:** Create a concise, one-paragraph hypothetical document that provides a
-            plausible, detailed answer to the **rewritten query**. This document will be used to find similar,
-            real documents in the knowledge base.
+        3.  **Generate HyDE Document:** Create a concise, single-paragraph hypothetical document (120–200 words)
+            in the same style as the corpus (formal/academic). Include exact entities, acronyms, synonyms and likely
+            section cues (e.g., Abstract, Model Architecture) that would appear in a real document. This document
+            will be used to find similar, real documents in the knowledge base.
 
         **Output Format:**
-        Provide your response as a single, valid JSON object with three keys:
+        Provide your response as a single, valid JSON object with exactly these keys:
         - "requires_retrieval": (boolean) Your classification decision.
         - "hyde_document": (string) The hypothetical document.
         - "query": (string) The rewritten, standalone query.
 
-        Do not include any preamble or text outside the JSON object.
+        Constraints:
+        - The "query" field MUST be a rewrite of the user's latest query above, not an example.
+        - The "query" must contain at least one non-stopword from the user's latest query; otherwise set it equal to the user's latest query.
+        - Do not include any preamble or examples. Output ONLY the JSON object.
 
-        Example format example:
-        Query: "What were the key findings of the Llama 2 paper?"
-        {{
-            "requires_retrieval": true,
-            "hyde_document": "The Llama 2 paper introduced a collection of pretrained and fine-tuned large language models (LLMs) ranging from 7 billion to 70 billion parameters. Key findings highlighted its improved performance over the original Llama models, particularly in reasoning, coding, and knowledge-based tasks. The paper also detailed a novel fine-tuning methodology focused on safety and helpfulness, demonstrating that the models could achieve state-of-the-art results while minimizing harmful or biased outputs through techniques like supervised fine-tuning and reinforcement learning with human feedback (RLHF).",
-            "query": "What were the key findings of the Llama 2 paper?"
-        }}
+        Do not include examples in your output.
         """
 
         print("--- [DEBUG] Prompt constructed. About to call self.llm.acomplete ---")
@@ -150,6 +150,81 @@ class QueryPlannerAgent:
                 raise json.JSONDecodeError("No JSON object found in response.", raw_text, 0)
 
             plan = json.loads(json_fragment)
+
+            # --- Retrieval-bias heuristics to correct LLM misclassification ---
+            # Favor retrieval for domain/document-grounded questions and citation requests.
+            def _tokens(text: str) -> set[str]:
+                import re
+                if not text:
+                    return set()
+                toks = [t for t in re.split(r"\W+", text) if t]
+                upp = re.findall(r"\b[A-Z]{2,}\b", text)
+                nums = re.findall(r"\b\d+(?:\.\d+)?\b", text)
+                alnum = re.findall(r"\b[a-zA-Z]*\d+[a-zA-Z0-9]*\b", text)
+                base = [t.lower() for t in toks if len(t) >= 3]
+                base.extend([t.lower() for t in upp])
+                base.extend([t.lower() for t in nums])
+                base.extend([t.lower() for t in alnum if len(t) >= 2])
+                return set(base)
+
+            def _collect_kb_tokens() -> set[str]:
+                import os, re, pickle
+                kb = set()
+                # Prefer filenames from data dir
+                try:
+                    from config import Config as _Cfg
+                    if os.path.isdir(_Cfg.DATA_DIR):
+                        for name in os.listdir(_Cfg.DATA_DIR):
+                            base = os.path.splitext(name)[0]
+                            for t in re.split(r"\W+", base.lower()):
+                                if len(t) >= 3:
+                                    kb.add(t)
+                except Exception:
+                    pass
+                # Also try node metadata if available
+                try:
+                    from config import Config as _Cfg
+                    if os.path.exists(_Cfg.NODES_PATH):
+                        with open(_Cfg.NODES_PATH, 'rb') as h:
+                            nodes = pickle.load(h)
+                        for n in nodes or []:
+                            md = getattr(n, 'metadata', {}) or {}
+                            f = (md.get('source_file') or md.get('file_name') or '')
+                            base = os.path.splitext(f)[0]
+                            for t in re.split(r"\W+", base.lower()):
+                                if len(t) >= 3:
+                                    kb.add(t)
+                except Exception:
+                    pass
+                return kb
+
+            q = (plan.get('query') or query or '').strip()
+            q_toks = _tokens(q)
+            kb_toks = _collect_kb_tokens()
+            kb_hit = bool(q_toks & kb_toks)
+
+            # Phrases that imply document grounding/citations
+            lower_q = q.lower()
+            doc_phrases = (
+                'paper', 'arxiv', 'pdf', 'section', 'abstract', 'figure', 'table',
+                'where did you find', 'source', 'sources', 'cite', 'citation', 'reference'
+            )
+            wants_citation = any(p in lower_q for p in doc_phrases)
+
+            # Lightweight greeting / small-talk detector
+            smalltalk = any(t in {'hi','hello','hey','thanks','thank','bye'} for t in q_toks)
+
+            # Heuristic rule: if references to papers/sources or KB tokens detected, force retrieval
+            # Otherwise, if clearly small-talk, allow non-retrieval; when uncertain, prefer retrieval
+            heur_requires_retrieval = wants_citation or kb_hit or (not smalltalk)
+            original = plan.get('requires_retrieval')
+            if heur_requires_retrieval and not original:
+                plan['requires_retrieval'] = True
+                plan['heuristic_reason'] = 'kb_or_citation_cue'
+            elif original is None:
+                plan['requires_retrieval'] = True
+                plan['heuristic_reason'] = 'default_true'
+
             print(f"Query requires retrieval: {plan.get('requires_retrieval')}")
             print(f"Generated HyDE document (preview): '{plan.get('hyde_document', '')[:100]}...'")
             return plan

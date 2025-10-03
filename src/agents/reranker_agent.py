@@ -2,7 +2,7 @@
 # Reranking phase of the retrieval 
 
 from typing import List 
-from config import Config 
+from config import Config
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
 from llama_index.core.postprocessor import SentenceTransformerRerank
 
@@ -25,7 +25,7 @@ class RerankerAgent:
         # Use a lighter model for now, to be optimized later
         self.reranker = SentenceTransformerRerank(
             model = "cross-encoder/ms-marco-MiniLM-L-2-v2",
-            top_n = 3 # Subject to experimentation
+            top_n = 6 # Subject to experimentation
         )
 
         print("Initialized RerankerAgent.")
